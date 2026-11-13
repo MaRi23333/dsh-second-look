@@ -1,0 +1,112 @@
+name: publish-npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'MaRi23333/dsh-second-look' && github.event.repository.private == false && github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.28.5
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup npm for trusted publishing
+        run: npm install --global npm@11.19.0
+
+      - name: Verify repository, package and annotated tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+          assert.equal(p.name,'dsh-second-look');
+          assert.notEqual(p.private,true);
+          assert.match(p.version,/^\d+\.\d+\.\d+$/);
+          assert.equal(process.env.RELEASE_TAG,'v'+p.version);
+          NODE
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{}")" = "$(git rev-parse HEAD)"
+
+      - name: Reject an existing version or unavailable registry
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+          const r=await fetch('https://registry.npmjs.org/'+encodeURIComponent(p.name)+'/'+encodeURIComponent(p.version),{signal:AbortSignal.timeout(30000)});
+          assert.equal(r.status,404,'Version must be absent (HTTP 404); an existing version or registry error stops publication');
+          NODE
+
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and lint
+        run: |
+          pnpm typecheck
+          pnpm lint
+
+      - name: Tests with an isolated profile
+        env:
+          HOME: ${{ runner.temp }}/second-look-home
+          USERPROFILE: ${{ runner.temp }}/second-look-home
+          DSH_HOME: ${{ runner.temp }}/second-look-home/dsh
+        run: pnpm test
+
+      - name: Build and verify shipped artifacts
+        run: |
+          node .github/check-build.mjs save
+          pnpm build
+          node .github/check-build.mjs verify
+
+      - name: Built plugin in real host services
+        env:
+          HOME: ${{ runner.temp }}/second-look-home
+          USERPROFILE: ${{ runner.temp }}/second-look-home
+          DSH_HOME: ${{ runner.temp }}/second-look-home/dsh
+          SECOND_LOOK_TEST_BUNDLE: '1'
+        run: pnpm exec vitest run test/real-host.spec.ts test/preset-install.spec.ts
+
+      - name: Package the verified committed runtime bytes
+        run: git restore --source=HEAD --worktree -- lib
+
+      - name: Exact package contents
+        run: |
+          npm pack --dry-run --json --ignore-scripts > "$RUNNER_TEMP/second-look-pack.json"
+          node .github/check-package.mjs "$RUNNER_TEMP/second-look-pack.json"
+
+      - name: Verify tracked files remain unchanged
+        run: git diff --exit-code
+
+      - name: Publish to npm with OIDC provenance
+        run: npm publish --ignore-scripts --access public --provenance --registry=https://registry.npmjs.org/
