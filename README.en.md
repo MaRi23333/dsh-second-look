@@ -22,6 +22,30 @@ Choose the review depth for each task, then look back at why an action was allow
 
 > **Beta 0.1.3** · Requires DSH `>=0.2.1-rc.5 <0.3.0-0` and a reviewer model you trust.
 
+## Download and install
+
+Requires DSH `>=0.2.1-rc.5 <0.3.0-0`. You can install it in the desktop app without opening a terminal.
+
+1. In the sidebar, open **Plugins → Add plugin** and enter `dsh-second-look@latest`. To install this version specifically, enter `dsh-second-look@0.1.3`.
+2. Select **Enable now** after installation. If a restart is requested, choose **Quit** from the application menu and reopen DSH.
+3. Look for **Settings → Second Look** to confirm it is enabled.
+
+**Prefer a download?** [Download dsh-second-look-0.1.3.tgz](https://github.com/MaRi23333/dsh-second-look/releases/download/v0.1.3/dsh-second-look-0.1.3.tgz). Leave it packed and enter its full path in the same **Add plugin** box, then enable it as above. [View on npm](https://www.npmjs.com/package/dsh-second-look)
+
+<details>
+<summary>Install with the desktop CLI</summary>
+
+Start DSH Desktop once, select **Manage dsh Command… → Install** from the application menu, then quit the app. In a new terminal, run:
+
+```sh
+dsh plugin --profile desktop add dsh-second-look@0.1.3
+dsh plugin --profile desktop list
+```
+
+Once you see `dsh-second-look@0.1.3`, reopen Desktop and enable the plugin. Use the `dsh` command bundled with Desktop; a standalone CLI installed with npm or run with `npx` cannot manage desktop plugins.
+
+</details>
+
 ## When is it useful?
 
 - **When your AI edits files or runs commands:** add an independent check to automated work, with attention to high-risk deletion, overwrites, scripts, and outbound actions.
@@ -50,9 +74,8 @@ You choose the reviewer model, and Enhanced review can use a separate one. Subag
 
 ## Try it
 
-1. **Install the plugin:** in DSH Desktop, open **Plugins → Add plugin** and enter `dsh-second-look@0.1.3`. Select **Enable now** after installation. If prompted, quit and reopen DSH. Alternatively, download the `.tgz` from the [GitHub release](https://github.com/MaRi23333/dsh-second-look/releases/tag/v0.1.3) and enter its full path without extracting it.
-2. **Choose a reviewer:** open **Settings → Second Look → Review settings** and select a provider and model. Tool arguments, relevant context, and parts of code diffs may be sent to that model for review. The plugin cannot redact all sensitive content.
-3. **Select a tier:** choose **Routine review** or **Enhanced review** from the composer permission menu. Ask the AI to read a file, then look for the result in Approval history.
+1. **Choose a reviewer:** open **Settings → Second Look → Review settings** and select a provider and model. Tool arguments, relevant context, and parts of code diffs may be sent to that model for review. The plugin cannot redact all sensitive content.
+2. **Select a tier:** choose **Routine review** or **Enhanced review** from the composer permission menu. Ask the AI to read a file, then look for the result in Approval history.
 
 ## Before you start
 

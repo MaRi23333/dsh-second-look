@@ -18,7 +18,7 @@ DSH `>=0.2.1-rc.5 <0.3.0-0` · Node.js `^22.19.0 || >=24.0.0` · `dsh-second-loo
 
 ## Local Build & Trial Setup
 
-Desktop users can [install the prebuilt plugin](../README.en.md#try-it). Follow the build steps below if you are modifying the source.
+Desktop users can [install the prebuilt plugin](../README.en.md#download-and-install). Follow the build steps below if you are modifying the source.
 
 ### 1. Install Dependencies & Build
 
