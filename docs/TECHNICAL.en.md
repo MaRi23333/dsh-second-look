@@ -6,11 +6,11 @@ DSH `>=0.2.1-rc.5 <0.3.0-0` · Node.js `^22.19.0 || >=24.0.0` · `dsh-second-loo
 
 ## How It Works
 
-- **Two Per-Session Review Tiers**: Selected per conversation from the composer permission menu. Subagents inherit gate enforcement along the session lineage chain, and switching tiers invalidates in-flight reviews and cached grants for that session tree.
+- **Two Per-Session Review Tiers**: Selected per conversation from the composer permission menu. Subagents use their parent session’s review settings. Switching tiers cancels pending reviews and invalidates cached approvals for the session and its descendants.
   - **Routine review** (preset ID `second-look-daily`): Allows routine reads, ordinary new-file writes, and ordinary writes to verified empty files by rule. Whole-file overwrites of existing non-empty files are reviewed; high-risk deletions, critical overwrites, suspicious shell commands, and apparent credential exfiltration are sent to the reviewer model, with up to 1 read-only evidence round.
   - **Enhanced review** (preset ID `second-look-strict`): Adds inspection of file diffs, scripts, outbound network actions, and persistence mechanisms, with up to 3 read-only evidence rounds plus file-batch code review before execution and before delivery.
 - **User-Configured Independent Reviewer**: You explicitly configure the reviewer route (`reviewerModelProvider`, `reviewerModel`, and optional `reasoningEffort`), and the plugin does not fall back to the active working model. Enhanced review can use a separate route or inherit the base route when left empty. API credentials remain managed by the DSH host; local plugin settings do not store secret keys. Reviewer responses resolve to four structured verdicts: `allow`, `ask_user`, `deny`, or `need_evidence`.
-- **Single-Use Settlement Guard**: Each approval token is bound to six fields—execution token, call ID, session ID, tool name, argument digest, and configuration version—and is consumed once at dispatch, blocking cross-call replay or post-approval argument changes.
+- **Each approval is valid for one call**: Each approval token is bound to six fields—execution token, call ID, session ID, tool name, argument digest, and configuration version—and is consumed once at dispatch, blocking cross-call replay or post-approval argument changes.
 - **Host Locale Synchronization**: Client settings, session permission menus, review prompts, block notices, and finalize reports follow the active DSH host language (English / Simplified Chinese).
 - **Evidence Redaction & Outbound Checks**: Arguments, context, and diffs sent to the reviewer replace matched secret patterns with `[REDACTED]`. Outbound model requests in gated sessions are also checked against known credential patterns so unapproved raw matches stay unsent.
 
@@ -36,8 +36,8 @@ You can also run `pnpm lint` during local development. The directory ships `cord
 ### 2. Local Mounting & Reviewer Setup
 
 1. **Mount the Plugin**: Install or link the plugin from its local directory using the DSH plugin manager.
-2. **Configure the Reviewer Route**: Open **Settings → Second Look** in the DSH client. Under **Review settings**, pick or manually enter `reviewerModelProvider` and `reviewerModel`, along with optional reasoning effort and evidence/timeout budgets. Configure provider API credentials in the host's own model settings. Saved plugin settings are written atomically to `$DSH_HOME/second-look/settings.json`.
-3. **Select a Tier & Smoke-Check**: Choose **Routine review** or **Enhanced review** from the session permission menu in the composer bar, run a non-destructive tool call, and check **Settings → Second Look → Approval history** to confirm a record appears. This step only verifies plugin wiring and audit recording; it does not measure reviewer decision accuracy.
+2. **Choose a reviewer model**: Open **Settings → Second Look** in the DSH client. Under **Review settings**, pick or manually enter `reviewerModelProvider` and `reviewerModel`, along with optional reasoning effort and evidence/timeout budgets. Configure provider API credentials in the host's own model settings. Saved plugin settings are written atomically to `$DSH_HOME/second-look/settings.json`.
+3. **Check that the plugin is enabled**: Choose **Routine review** or **Enhanced review** from the session permission menu in the composer bar, ask the AI to read a file, and check **Settings → Second Look → Approval history** to confirm a record appears. This step only verifies plugin wiring and audit recording; it does not measure reviewer decision accuracy.
 
 ---
 
@@ -63,9 +63,7 @@ Because the host has no end-of-turn hook capable of blocking final assistant tex
 
 ---
 
-## Limitations & Known Boundaries
-
-Evaluate and use Second Look with the following practical limits in mind:
+## What can slip through?
 
 1. **No OS Sandbox**: The plugin operates at the DSH application and tool-dispatch layer, not as an operating-system or kernel sandbox. When disabled or unmounted, sessions use native host permissions. Reviews also evaluate a call-time snapshot, leaving a race window if external processes modify files before execution completes.
 2. **Model Misjudgment & Pending Full Acceptance**: Review quality depends on the configured language model, which can produce both false positives (blocking benign actions) and false negatives (missing obfuscated or indirect risks). Automated tests verify state transitions, rules, and dispatch guards; end-to-end host upgrade testing and comprehensive accuracy validation with live models have not yet been completed.
