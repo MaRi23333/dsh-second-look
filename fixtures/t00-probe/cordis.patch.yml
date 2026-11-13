@@ -1,0 +1,17 @@
+# T00 seam probe (single combined fixture bundle):
+# row 1 — the probe itself; row 2 — the local stdio MCP test server as `t00`.
+# Disposable test fixture: no locale/icon resources (documented omission).
+- insert:
+    - id: second-look-t00-probe
+      name: '@local/second-look-t00-probe'
+      config: {}
+    - id: t00-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: t00
+        transport: stdio
+        command: node
+        args:
+          # Replace this example with the absolute path to your checkout.
+          - '/absolute/path/to/dsh-second-look/fixtures/t00-probe/mcp-server.mjs'
+        failOnStartupError: true

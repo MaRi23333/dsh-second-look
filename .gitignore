@@ -1,0 +1,29 @@
+node_modules/
+*.log
+.DS_Store
+*.tmp
+.env
+.env.*
+coverage/
+*.tgz
+*.tsbuildinfo
+.pnpm-store/
+
+# Internal handoff (local paths / restart notes). Keep on disk, never publish.
+HANDOFF.md
+
+# Local run evidence, screenshots, and host-config backups.
+.r123/
+.t00/
+.t04/
+tmp-*/
+
+# Local read-only reference checkouts. dsh-auto-review-0.15.0 is its own git
+# repo; provenance is recorded in THIRD-PARTY-SOURCES.md, not vendored here.
+reference/
+
+# Local development handoffs and platform return receipts (kept on disk).
+/docs/history/
+/docs/IDENTITY-SECURITY-20261102.md
+/docs/PRESET-CACHE-20261102.md
+/docs/REVIEW-R2-20261102.md

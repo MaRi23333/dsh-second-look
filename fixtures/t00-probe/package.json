@@ -1,0 +1,9 @@
+{
+  "name": "@local/second-look-t00-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.js" },
+  "files": ["index.js", "mcp-server.mjs", "cordis.patch.yml"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

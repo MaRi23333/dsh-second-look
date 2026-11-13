@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: '22' }
+          - { os: ubuntu-latest, node: '24' }
+          - { os: windows-latest, node: '24' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck and lint
+        run: |
+          pnpm typecheck
+          pnpm lint
+      - name: Tests with an isolated profile
+        env:
+          HOME: ${{ runner.temp }}/second-look-home
+          USERPROFILE: ${{ runner.temp }}/second-look-home
+          DSH_HOME: ${{ runner.temp }}/second-look-home/dsh
+        run: |
+          mkdir -p "$HOME" "$DSH_HOME"
+          pnpm test
+      - name: Build and compare shipped artifacts
+        run: |
+          node .github/check-build.mjs save
+          pnpm build
+          node .github/check-build.mjs verify
+      - name: Built plugin in real host services
+        env:
+          HOME: ${{ runner.temp }}/second-look-home
+          USERPROFILE: ${{ runner.temp }}/second-look-home
+          DSH_HOME: ${{ runner.temp }}/second-look-home/dsh
+          SECOND_LOOK_TEST_BUNDLE: '1'
+        run: pnpm exec vitest run test/real-host.spec.ts test/preset-install.spec.ts
+      - name: Distribution contents
+        run: |
+          npm pack --dry-run --json --ignore-scripts > "$RUNNER_TEMP/second-look-pack.json"
+          node .github/check-package.mjs "$RUNNER_TEMP/second-look-pack.json"
+          git diff --exit-code -- package.json pnpm-lock.yaml

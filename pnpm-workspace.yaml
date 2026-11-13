@@ -1,0 +1,3 @@
+# Explicit build-script decision for the optional native filesystem helper.
+allowBuilds:
+  koffi: false

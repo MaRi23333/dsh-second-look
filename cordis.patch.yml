@@ -1,0 +1,5 @@
+# Second Look — single host-plugin row (T01 skeleton; seams wired in T02+).
+- insert:
+    - id: dsh-second-look
+      name: 'dsh-second-look'
+      config: {}
