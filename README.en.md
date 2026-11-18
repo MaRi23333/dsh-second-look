@@ -14,11 +14,15 @@
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-%3E%3D0.2.1--rc.5%20%3C0.3.0--0-4d6bfe?style=flat-square" alt="DeepSeek Harness >=0.2.1-rc.5 <0.3.0-0" />
 </p>
 
-**Have a second model check before your AI overwrites a file or runs a suspicious command.**
+**Usually work in Full access, but want a second opinion before your agent overwrites a file?**
 
-Second Look is a tool-action review plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). In sessions with review enabled, routine low-risk actions pass by rule. Actions such as high-risk deletion, whole-file overwrites, and suspicious commands go to a reviewer model you choose. Tool actions that need your decision return to DSH's human approval interface.
+In [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), choose **Routine review** from the permissions menu in the message box. Your agent has the same filesystem access as in Full access mode. It can usually read the project docs and create a new guide in the project without stopping for approval. If it tries to overwrite the entire README, a reviewer model you choose checks the action first. The reviewer can allow it, block it, or ask you to decide in DSH.
 
-Choose the review depth for each task, then look back at why an action was allowed, blocked, or referred to you.
+## Which review plugin fits your workflow?
+
+If you want an AI to review shell commands while you approve file writes yourself, the upstream [dsh-auto-review](https://github.com/PerryLink/dsh-auto-review) plugin lets you set a policy for each tool. Second Look’s presets let you choose by task. In Routine review, actions that pass the built-in rules need neither a reviewer call nor a click. Switch that session to **Enhanced review** when you want a closer look at diffs or scripts. Sessions left in DSH’s built-in Full access mode keep their usual behavior.
+
+**Stepping away from your desk?** Pair Second Look with [ServerChan Watchdog](https://github.com/MaRi23333/dsh-serverchan-watchdog). Once configured, it sends a phone notification when a tool approval has been waiting in DSH longer than your chosen delay (five minutes by default). Return to DSH to approve or decline.
 
 > **Beta 0.1.3** · Requires DSH `>=0.2.1-rc.5 <0.3.0-0` and a reviewer model you trust.
 
@@ -45,12 +49,6 @@ dsh plugin --profile desktop list
 Once you see `dsh-second-look@0.1.3`, reopen Desktop and enable the plugin. Use the `dsh` command bundled with Desktop; a standalone CLI installed with npm or run with `npx` cannot manage desktop plugins.
 
 </details>
-
-## When is it useful?
-
-- **When your AI edits files or runs commands:** add an independent check to automated work, with attention to high-risk deletion, overwrites, scripts, and outbound actions.
-- **When a task needs closer inspection:** use Enhanced review to examine diffs and scripts, reading related files if it needs more information.
-- **When you want to understand a block:** find the relevant history by tool, reason, or session and read why the decision was made.
 
 ## Why was a request blocked?
 
