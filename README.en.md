@@ -20,7 +20,7 @@ In [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), ch
 
 ## Which review plugin fits your workflow?
 
-If you want an AI to review shell commands while you approve file writes yourself, the upstream [dsh-auto-review](https://github.com/PerryLink/dsh-auto-review) plugin lets you set a policy for each tool. Second Look’s presets let you choose by task. In Routine review, actions that pass the built-in rules need neither a reviewer call nor a click. Switch that session to **Enhanced review** when you want a closer look at diffs or scripts. Sessions left in DSH’s built-in Full access mode keep their usual behavior.
+If you want an AI to review shell commands while you approve file writes yourself, the upstream [dsh-auto-review](https://github.com/PerryLink/dsh-auto-review) plugin lets you set a policy for each tool. Second Look’s presets let you choose by task. Routine review keeps interruptions to a minimum. Actions that pass its rules run without making you click through another prompt or wait for a reviewer. Switch that session to **Enhanced review** when you want a closer look at diffs or scripts. Sessions left in DSH’s built-in Full access mode keep their usual behavior.
 
 **Stepping away from your desk?** Pair Second Look with [ServerChan Watchdog](https://github.com/MaRi23333/dsh-serverchan-watchdog). Once configured, it sends a phone notification when a tool approval has been waiting in DSH longer than your chosen delay (five minutes by default). Return to DSH to approve or decline.
 
