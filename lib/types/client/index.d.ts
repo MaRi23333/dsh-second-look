@@ -11,7 +11,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         'second-look.permission': PermissionAccessKey;
     }
 }
-/** Browser services required by the settings section. */
+/** Browser services used by settings and the current-session permission picker. */
 export declare const inject: string[];
 export declare function apply(ctx: ClientContext): void;
 //# sourceMappingURL=index.d.ts.map

@@ -1,17 +1,6 @@
-/**
- * Modified for dsh-second-look, 2026-10-31 (T02).
- *
- * Trusted user-context assembly with provenance, adapted from the local fork
- * `dsh-heavy-approval/src/review-context.ts` (workspace-local source, reused
- * with attribution; see THIRD-PARTY-SOURCES.md).
- *
- * Task-doc rule: model claims, tool outputs and repository instructions are
- * EVIDENCE, never authorization. Only messages whose source is a real user
- * (or a direct parent instruction) enter the trusted context, each labelled
- * with where it came from; budgets are spent newest-first and any cut is
- * disclosed, never silent.
- */
+import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import type { TrustedUserContext } from '../action/types.js';
+import type { ContextBudgetConfig } from '../config.js';
 /** The minimal message shape the partitioner reads. */
 export interface ContextMessage {
     readonly role: string;
@@ -41,4 +30,21 @@ export declare function isTrustedInstruction(message: ContextMessage, parentSess
  * @returns labelled entries with honest omission flags.
  */
 export declare function buildUserContext(messages: readonly ContextMessage[], options?: BuildUserContextOptions): TrustedUserContext;
+export interface ToolReviewContext {
+    readonly disabled: boolean;
+    readonly instructions: TrustedUserContext;
+    readonly previousReply?: string | undefined;
+    readonly relatedResults: readonly string[];
+    readonly evidenceOmitted: boolean;
+}
+interface ContextCall {
+    readonly name: string;
+    readonly callId: string;
+    readonly arguments: unknown;
+    readonly targetPaths: readonly string[];
+    readonly parentSessionId?: string | undefined;
+}
+/** Select decision evidence from the same session snapshot as the pending call. */
+export declare function buildToolReviewContext(events: readonly SessionEvent[], budget: ContextBudgetConfig, call: ContextCall): ToolReviewContext;
+export {};
 //# sourceMappingURL=context.d.ts.map

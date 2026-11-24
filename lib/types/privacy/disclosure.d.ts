@@ -42,6 +42,9 @@ export interface DisclosureRecord {
 /** The disclosure ledger for one mounted gate. */
 export declare class DisclosureLedger {
     private readonly records;
+    private readonly sessionRevisions;
+    /** Check whether a pending review or tool result still belongs to its original authorization scope. */
+    captureSession(sessionId: string): () => boolean;
     /**
      * Record a disclosure decision for one exact scope.
      * @param record - the decision (granted or refused).

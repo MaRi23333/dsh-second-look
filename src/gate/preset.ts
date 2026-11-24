@@ -39,8 +39,8 @@ export const GATE_PRESET_BUNDLE = {
 
 /** The permission-row config fragment that declares the preset. */
 export const GATE_PERMISSION_ROW_PRESETS = {
-  [GATE_DAILY_PRESET]: { name: 'Routine review', description: 'Review risky actions with fewer interruptions.', ...GATE_PRESET_BUNDLE },
-  [GATE_STRICT_PRESET]: { name: 'Enhanced review', description: 'Additional checks for changes and sensitive information.', ...GATE_PRESET_BUNDLE },
+  [GATE_DAILY_PRESET]: { name: 'Routine review', description: 'Review risky actions. The main model receives the original conversation.', ...GATE_PRESET_BUNDLE },
+  [GATE_STRICT_PRESET]: { name: 'Enhanced review', description: 'Review changes and check main model requests for sensitive content.', ...GATE_PRESET_BUNDLE },
 } as const
 
 /** The structural shape of the host `permissionPresets` service (feature-detected). */

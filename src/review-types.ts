@@ -10,7 +10,9 @@
  * these inputs as `ApprovalRequest` — this module replaces that coupling.
  */
 import type { Session } from '@deepseek-ai/dsh-session'
+import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { CallId } from './call-id.ts'
+import type { ToolReviewContext } from './evidence/context.ts'
 
 /**
  * The closed four-verdict vocabulary (T03): the reviewer's structured output
@@ -28,6 +30,9 @@ export interface ReviewRequestAgent {
   readonly session: Session
 }
 
+/** Declared behavior of the called tool in the agent's scope. */
+export type ToolDeclaration = Readonly<Pick<ToolSchema, 'description' | 'parameters'>>
+
 /** One pending action awaiting a review verdict. */
 export interface ReviewRequest {
   /** The tool name shown to the reviewer. */
@@ -36,9 +41,14 @@ export interface ReviewRequest {
   readonly callId?: CallId | undefined
   /** Actual immutable execution arguments, including PTC inner calls. */
   readonly arguments?: unknown
+  readonly toolDeclaration?: ToolDeclaration | undefined
   readonly cwd?: string | undefined
   /** Why the gate asked (our own reason text), when one applies. */
   readonly reason?: string | undefined
+  /** Source-labelled evidence selected for an active tool call. */
+  readonly toolContext?: ToolReviewContext | undefined
+  /** Local observations or conditional Host contracts, separate from authorization. */
+  readonly hostFacts?: readonly string[] | undefined
   /** Cancellation: the caller's or the gate's lifetime signal. */
   readonly signal?: AbortSignal | undefined
   /** The asking agent (see {@link ReviewRequestAgent}). */

@@ -53,7 +53,9 @@ export function inReviewScope(): boolean {
  * @param scan - the scan result.
  * @param destination - the outbound route.
  * @param ledger - the disclosure ledger.
- * @param requestRef - audit association (session/call).
+ * @param sessionId - audit association and disclosure scope.
+ * @param language - language for user-facing reasons.
+ * @param reviewing - whether this request is for a reviewer.
  * @returns the decision (never grants without an exact-scope record).
  */
 export function decideOutbound(
@@ -62,6 +64,7 @@ export function decideOutbound(
   ledger: DisclosureLedger,
   sessionId?: string,
   language: UiLanguage = 'en',
+  reviewing = inReviewScope(),
 ): OutboundDecision {
   const t = (zh: string, en: string): string => text(language, zh, en)
   const scope: DisclosureScope = { destination, dataFingerprint: scan.dataFingerprint, sessionId }
@@ -76,6 +79,14 @@ export function decideOutbound(
       : ''
     return { action: 'send', reason: `${t('未检测到敏感内容', 'no sensitive material detected')}${pathNote}${note}`, scope, scan }
   }
+  if (reviewing) {
+    return {
+      action: 'block-unsent',
+      reason: `${t('审核请求中仍有敏感内容，已拦截且不会递归发起隐私审核；请求未发送', 'sensitive material inside a REVIEW request — checked (no bypass) but no second privacy review is launched; the request stays unsent')}${note}`,
+      scope,
+      scan,
+    }
+  }
   const state = ledger.check(scope)
   if (state === 'granted') {
     return { action: 'send-granted', reason: `${t('这些数据向此目的地的披露已获得授权', 'disclosure previously authorized for this exact data and destination')}${note}`, scope, scan }
@@ -88,20 +99,13 @@ export function decideOutbound(
       scan,
     }
   }
-  if (inReviewScope()) {
-    return {
-      action: 'block-unsent',
-      reason: `${t('审核请求中仍有敏感内容，已拦截且不会递归发起隐私审核；请求未发送', 'sensitive material inside a REVIEW request — checked (no bypass) but no second privacy review is launched; the request stays unsent')}${note}`,
-      scope,
-      scan,
-    }
-  }
   return { action: 'review', reason: `${t(`检测到 ${scan.findings.length} 处敏感内容，等待披露审核`, `sensitive material awaiting a precise disclosure decision (${scan.findings.length} finding(s))`)}${note}`, scope, scan }
 }
 
 /** One audit event from the guard (redacted; never raw secrets). */
 export interface OutboundAuditEvent {
   readonly action: OutboundAction
+  readonly reviewing?: boolean
   readonly reason: string
   readonly destination: OutboundDestination
   readonly dataFingerprint: string
@@ -127,12 +131,10 @@ export interface OutboundGuardDeps {
   ): Promise<PrivacyOutcome | PrivacyVerdict>
   readonly restart?: (options: OutboundOptionsLike) => AsyncIterable<unknown>
   readonly onEvent?: (event: OutboundAuditEvent) => void
-  /**
-   * Whether the request's session is under the gate (终审 Major 1): the guard
-   * is part of the GATE and must not touch native sessions — a false return
-   * passes the request straight through.
-   */
+  /** Whether this work session uses Enhanced outbound privacy checks. */
   readonly isGatedRequest?: ((sessionId: string) => boolean) | undefined
+  /** Identify an active reviewer child even outside its async review scope. */
+  readonly isReviewerRequest?: (sessionId: string) => boolean
 }
 
 /** The structural options surface of `llm/stream` (T00 §6). */
@@ -161,9 +163,9 @@ export function createOutboundGuard(deps: OutboundGuardDeps) {
     kind: 'error', failure: { code: 'SECOND_LOOK_PRIVACY_BLOCKED', message: `[${brand(language())}] ${reason}` },
   } })
   const emit = (event: OutboundAuditEvent): void => { try { deps.onEvent?.(event) } catch { /* audit failure cannot suppress stream completion */ } }
-  async function* recover(options: OutboundOptionsLike, reason: string): AsyncIterable<unknown> {
+  async function* recover(options: OutboundOptionsLike, reason: string, reviewing: boolean): AsyncIterable<unknown> {
     if (options.signal?.aborted) { yield terminal(t('请求已取消', 'request cancelled')); return }
-    if (!deps.restart || inReviewScope() || recoveryScope.getStore() || options.attachments != null) {
+    if (!deps.restart || reviewing || recoveryScope.getStore() || options.attachments != null) {
       yield terminal(reason)
       return
     }
@@ -198,24 +200,28 @@ export function createOutboundGuard(deps: OutboundGuardDeps) {
   return async function* outboundGuard(options: OutboundOptionsLike, next: () => AsyncIterable<unknown>): AsyncIterable<unknown> {
     // Reviewer transport/cache identity is separate; the async scope preserves
     // the protected parent for privacy decisions and audit correlation.
-    const requestRef = reviewScope.getStore()?.protectedSessionId ?? String(options.sessionId ?? 'no-session')
-    if (deps.isGatedRequest?.(requestRef) === false && !inReviewScope()) { yield* next(); return }
+    const sessionId = String(options.sessionId ?? 'no-session')
+    const requestRef = reviewScope.getStore()?.protectedSessionId ?? sessionId
+    const reviewing = inReviewScope() || deps.isReviewerRequest?.(sessionId) === true
+    if (!reviewing && !recoveryScope.getStore() && deps.isGatedRequest?.(requestRef) === false) { yield* next(); return }
     let decision: OutboundDecision
     const destination = { provider: String(options.provider ?? 'unknown'), model: String(options.model ?? 'unknown') }
     try {
       const scan = scanOutbound({ messages: options.messages, system: options.system, tools: options.tools }, {
         attachmentsPresent: options.attachments != null,
       })
-      decision = decideOutbound(scan, destination, deps.ledger, requestRef, language())
+      decision = decideOutbound(scan, destination, deps.ledger, requestRef, language(), reviewing)
       if (decision.action === 'review') {
         if (recoveryScope.getStore()) {
           decision = { ...decision, action: 'block-unsent', reason: t('脱敏请求仍含敏感内容，不进行递归重试', 'redacted request still contains detected material; no recursive retry') }
         } else {
+          const isCurrent = deps.ledger.captureSession(requestRef)
           const raw = await runInReviewScope(() => deps.requestPrivacyReview(scan, destination, options.signal, requestRef))
-          const result = typeof raw === 'string' ? { outcome: raw, reason: t(`隐私审核结果：${raw === 'granted' ? '允许' : raw === 'denied' ? '拒绝' : '不可用'}`, `privacy reviewer: ${raw}`) } : raw
           if (options.signal?.aborted) { yield terminal(t('隐私审核期间请求已取消', 'request cancelled during privacy review')); return }
-          // A mode switch takes effect for the next request. This already-paused request
-          // still finishes its own review; it never silently sends the denied original.
+          let result: PrivacyVerdict = typeof raw === 'string' ? { outcome: raw, reason: t(`隐私审核结果：${raw === 'granted' ? '允许' : raw === 'denied' ? '拒绝' : '不可用'}`, `privacy reviewer: ${raw}`) } : raw
+          // This request still follows its original privacy policy after a mode switch.
+          // An invalidated decision cannot authorize its original payload or a later request.
+          if (!isCurrent()) result = { outcome: 'unavailable', reason: t('披露审核期间权限或设置已改变，原始请求未发送', 'permissions or review settings changed during disclosure review; original request was not sent') }
           if (result.outcome !== 'unavailable') deps.ledger.record({
             scope: decision.scope, reason: redactSecretSpans(result.reason), granted: result.outcome === 'granted', decidedBy: 'reviewer', at: Date.now(),
             evidence: scan.findings.map(f => `${f.kind}@${f.location}: ${f.evidence}`), requestRef,
@@ -229,23 +235,24 @@ export function createOutboundGuard(deps: OutboundGuardDeps) {
     } catch {
       // Do not include arbitrary exception text: providers may echo raw credentials.
       const reason = t('隐私检查失败，原始请求未发送；只有安全脱敏后才能继续', 'privacy check failed; original request left UNSENT; continuing requires safe redaction')
-      emit({ action: 'block-unsent', reason, destination, dataFingerprint: 'unknown', findingKinds: [], requestRef, at: Date.now() })
-      yield* recover(options, reason)
+      emit({ action: 'block-unsent', reviewing, reason, destination, dataFingerprint: 'unknown', findingKinds: [], requestRef, at: Date.now() })
+      yield* recover(options, reason, reviewing)
       return
     }
-    emit(auditOf(decision, destination, requestRef))
+    emit(auditOf(decision, destination, requestRef, reviewing))
     if (decision.action === 'send' || decision.action === 'send-granted') {
       // Adapter failures retain the host's own failure semantics; never swallow them.
       yield* next()
     } else {
-      yield* recover(options, decision.reason)
+      yield* recover(options, decision.reason, reviewing)
     }
   }
 }
 
-function auditOf(decision: OutboundDecision, destination: OutboundDestination, requestRef: string): OutboundAuditEvent {
+function auditOf(decision: OutboundDecision, destination: OutboundDestination, requestRef: string, reviewing: boolean): OutboundAuditEvent {
   return {
     action: decision.action,
+    reviewing,
     reason: decision.reason,
     destination,
     dataFingerprint: decision.scope.dataFingerprint,

@@ -37,14 +37,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { CallId } from '../call-id.ts'
 import { RISK_ORDER, type ResolvedConfig } from '../config.ts'
-import type { ReviewRequest } from '../review-types.ts'
+import type { ReviewRequest, ToolDeclaration } from '../review-types.ts'
 import { isReviewFailure, redactReviewEvidence, type ReviewFailure } from '../review.ts'
 import { HostLanguage, brand, text, failureText } from '../locale.ts'
 import { DEFAULT_DENY_GUIDANCE } from '../config.ts'
 import { runReviewWithEvidence } from '../evidence-loop.ts'
 import { ReviewerChildren } from '../isolation.ts'
 import { createNodeProbeFs } from '../evidence/node-fs.ts'
-import { setUserSensitiveMarkers } from '../evidence/sensitive.ts'
+import { isSensitivePathText, setUserSensitiveMarkers } from '../evidence/sensitive.ts'
+import { buildToolReviewContext } from '../evidence/context.ts'
+import { pluginManagementEvidence } from '../evidence/plugin-management.ts'
 import type { ProbeFileSystem } from '../evidence/probe.ts'
 import { recognizeCall, originOf } from '../action/adapters.ts'
 import { classifyAction, type Classification } from '../action/classify.ts'
@@ -68,7 +70,7 @@ import { buildFinalizeTool } from '../change/finalize.ts'
 import { DisclosureLedger } from '../privacy/disclosure.ts'
 import { scanOutbound } from '../privacy/detect.ts'
 import { createOutboundGuard, runInReviewScope, type OutboundDestination } from '../privacy/outbound.ts'
-import { sessionEvents } from '../session-events.ts'
+import { latestUserInputSeq, sessionEvents } from '../session-events.ts'
 import { AuditLog, FileAuditPersistence, type AuditPersistence } from '../settings/audit.ts'
 import { FileSettingsPersistence, defaultSettingsDir, type SettingsPersistence } from '../settings/persistence.ts'
 import { SettingsStore, runtimeSettingsFromConfig, type RuntimeSettings } from '../settings/store.ts'
@@ -83,6 +85,8 @@ export interface ExecLike {
   readonly arguments: unknown
   readonly agent?: AgentLike | undefined
   readonly signal?: AbortSignal | undefined
+  /** Step admission supplied by hosts with conditional tool registration. */
+  readonly toolSet?: unknown
   /** Present on PTC inner dispatches (T00 run5/run6). */
   readonly parent?: unknown
 }
@@ -92,6 +96,7 @@ export interface AgentLike {
   readonly id?: unknown
   readonly session?: Session | undefined
   readonly parentAgent?: ParentAgentLike | undefined
+  readonly inbox?: { readonly nextStep: readonly { readonly source: { readonly kind: string } }[] }
 }
 
 /** The structural approval request crossing `approval/request`. */
@@ -113,6 +118,8 @@ export type ApprovalOutcomeLike = 'allowed-once' | 'rejected' | 'cancelled' | 'u
 export interface ToolsSeam {
   guard(checker: (exec: ExecLike) => string | undefined): () => void
   register?(tool: unknown): () => void
+  get?(name: string, agent?: AgentLike): ToolDeclaration | undefined
+  executable?(name: string, agent?: AgentLike, toolSet?: unknown): ToolDeclaration | undefined
 }
 
 /** The event/tool seams the gate wires into (the host context, or a test bus). */
@@ -147,6 +154,7 @@ interface GateDecision {
   readonly reason: string
   readonly question?: string
   readonly decidedBy: DecidedBy
+  readonly isInputCurrent?: () => boolean
 }
 
 /** Live status for the settings/status surface (T07). */
@@ -291,7 +299,7 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
   const sessionsById = new Map<string, Session>()
   /** Sessions actually under the gate (the outbound guard scopes to these). */
   const agentsById = new Map<string, AgentLike>()
-  const sensitiveCalls = new Map<string, { readonly requestRef: string; decidedBy: DecidedBy }>()
+  const sensitiveCalls = new Map<string, { readonly requestRef: string; readonly isCurrent: () => boolean; decidedBy: DecidedBy }>()
   const outboundEvents: string[] = []
   let lastActiveSessionId = ''
   // T07: the decision audit log and the runtime settings store (seeds from
@@ -375,6 +383,21 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     }
   }
   const sessionOf = (id: string): Session | undefined => activeAgent(id)?.session ?? sessionsById.get(id)
+  const inputChanged = (): string => t('收到新的本轮用户指令，旧审核已失效', 'New user input invalidated the previous review')
+  const captureReviewInput = (agent: AgentLike | undefined, events: ReturnType<typeof sessionEvents>): (() => boolean) => {
+    const sources = agent?.session === undefined ? [] : [{ session: agent.session, seq: latestUserInputSeq(events) }]
+    let parent = parentOf(agent)
+    for (let depth = 0; parent?.session !== undefined && depth < 8; depth += 1) {
+      const session = parent.session as Session
+      sources.push({ session, seq: latestUserInputSeq(sessionEvents(session)) })
+      parent = parent.parentAgent
+    }
+    return () => sources.every(({ session, seq }) => {
+      const owner = session === agent?.session ? agent : activeAgent(String(session.id))
+      return owner?.inbox?.nextStep.some(message => message.source.kind === 'user') !== true
+        && latestUserInputSeq(sessionEvents(session)) === seq
+    })
+  }
   const ownTier = (session: Session | undefined, id: string): ReviewTier =>
     tierFromPreset(session && presets()?.current?.(session)) ?? tiers.get(id) ?? config.tiers.defaultTier
   const tierOf = (sessionId: string): ReviewTier => {
@@ -412,12 +435,11 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
       for (const [controller, requestOwner] of inFlight) if (requestOwner === owner) controller.abort()
     }
   }
-  const isCurrentlyGated = (id: string): boolean => {
-    if (reviewerSessions.has(id as SessionId)) return true
+  const usesOutboundPrivacy = (id: string): boolean => {
     const agent = activeAgent(id)
     const session = agent?.session ?? sessionsById.get(id)
     if (session) sessionsById.set(id, session)
-    return shouldGate(presets(), session, parentOf(agent))
+    return shouldGate(presets(), session, parentOf(agent)) && tierOf(id) === 'strict'
   }
 
 
@@ -541,7 +563,7 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     let result: Awaited<ReturnType<typeof runReviewWithEvidence>>
     try { result = await runReviewWithEvidence(ctx, { ...config, language: language.get() }, { ...request, signal: controller.signal, cwd: cwdOf(session) }, reviewerSessions, { fs }, { tier }) }
     finally { inFlight.delete(controller); signal?.removeEventListener('abort', onAbort) }
-    if (version !== configVersionOf(config, tierOf(requestRef))) return { outcome: 'unavailable', reason: t('披露审核期间设置改变，原始请求未发送', 'review settings changed during disclosure review; original request was not sent') }
+    if (controller.signal.aborted || version !== configVersionOf(config, tierOf(requestRef))) return { outcome: 'unavailable', reason: t('披露审核已取消或设置发生变化，原始请求未发送', 'disclosure review was cancelled or settings changed; original request was not sent') }
     if (isReviewFailure(result.resolution)) {
       // ask_user here has no verified human channel for outbound requests:
       // keep the request UNSENT and explain (no sticky refusal on failure).
@@ -594,6 +616,7 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     gateSessionsSeen.add(sessionId)
     const tier = tierOf(sessionId)
     const identity = identityOf(exec, sessionId, tier)
+    const isDisclosureCurrent = disclosureLedger.captureSession(sessionId)
     settlement.record(identity)
     if (session) callSessions.set(identity.callId, session)
     // T04 review F3: an ALREADY-aborted signal must never fall through to an
@@ -634,7 +657,7 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
       // model) up front (T06 review F01 — a disclosure decision must be an
       // INFORMED one); an allow covers THIS data to THIS destination only —
       // never other scenarios (auth use, publication).
-      sensitiveCalls.set(identity.callId, { requestRef: sessionId, decidedBy: 'reviewer' })
+      sensitiveCalls.set(identity.callId, { requestRef: sessionId, isCurrent: isDisclosureCurrent, decidedBy: 'reviewer' })
       const mainDest = mainRouteOf(session)
       const destLabel = mainDest === undefined ? '(route not yet established)' : `${mainDest.provider}/${mainDest.model}`
       extraReasons.push(
@@ -663,14 +686,42 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     exec.signal?.addEventListener('abort', onExecAbort, { once: true })
     if (exec.signal?.aborted) reviewAbort.abort()
     try {
+      const events = sessionEvents(session)
+      const isInputCurrent = captureReviewInput(exec.agent, events)
+      if (!isInputCurrent()) {
+        return routeReviewResult(exec, identity, session, {
+          resolution: { fallback: 'cancelled', error: inputChanged() },
+          tier, rounds: 0, promptVersion: tierPromptVersion(tier, config.tiers[tier]),
+        }, isInputCurrent)
+      }
+      // The registry resolves the calling scope, including scoped shadows.
+      // Newer hosts also expose the current step's admitted registrations.
+      const definition = seam.tools.executable === undefined
+        ? seam.tools.get?.(exec.name, exec.agent)
+        : seam.tools.executable(exec.name, exec.agent, exec.toolSet)
+      const reasons = tier === 'daily' && action.effect === 'unknown'
+        ? ['assess the effects and scope of the requested action']
+        : classification.reasons
       const request: ReviewRequest = {
         toolName: exec.name,
         callId: CallId(identity.callId),
         arguments: exec.arguments,
+        toolDeclaration: definition === undefined ? undefined : {
+          description: definition.description,
+          parameters: definition.parameters,
+        },
         cwd: action.cwd,
-        reason: [...classification.reasons, ...extraReasons].join('; '),
+        reason: [...reasons, ...extraReasons].join('; '),
         signal: reviewAbort.signal,
         agent: { session: session as Session },
+        toolContext: buildToolReviewContext(events, config.contextBudget, {
+          name: exec.name,
+          callId: identity.callId,
+          arguments: exec.arguments,
+          targetPaths: action.targets.filter(target => target.scope === 'inside' && !isSensitivePathText(target.rawPath))
+            .map(target => target.rawPath),
+          parentSessionId: session?.header.parentSession,
+        }),
       }
       const budget = config.tiers[tier].totalTimeoutMs
       const reviewed = await withDeadline<{ result: Awaited<ReturnType<typeof runReviewWithEvidence>>; batch?: BatchContext | undefined }>(budget, reviewAbort.signal,
@@ -678,7 +729,10 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
           const batch = tier === 'strict' && (action.effect === 'execute' || action.effect === 'delegate' || isFinalize)
             ? await collectBatchFor(action, signal, tier, identity.configVersion) : undefined
           signal.throwIfAborted()
-          const result = await runInReviewScope(() => runReviewWithEvidence(ctx, { ...config, language: language.get() }, { ...request, signal }, reviewerSessions, { fs }, {
+          const hostFacts = await pluginManagementEvidence(exec.name, exec.arguments,
+            exec.name === 'plugin_manager' ? ctx.get('pluginManager') as Parameters<typeof pluginManagementEvidence>[2] : undefined)
+          signal.throwIfAborted()
+          const result = await runInReviewScope(() => runReviewWithEvidence(ctx, { ...config, language: language.get() }, { ...request, signal, hostFacts }, reviewerSessions, { fs }, {
             tier, ...batch === undefined ? {} : { batch: batch.section },
           }))
           return { result, batch }
@@ -686,7 +740,7 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
         kind => ({ result: { resolution: { fallback: kind, error: `${failureText(language.get(), kind)}；${t('总时限包含变更收集和补证', 'Total budget includes batch collection and evidence')}` },
           tier, rounds: 0, promptVersion: tierPromptVersion(tier, config.tiers[tier]) } }),
       )
-      return routeReviewResult(exec, identity, session, reviewed.result, reviewed.batch)
+      return routeReviewResult(exec, identity, session, reviewed.result, isInputCurrent, reviewed.batch)
     } finally {
       inFlight.delete(reviewAbort)
       exec.signal?.removeEventListener('abort', onExecAbort)
@@ -748,12 +802,13 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     identity: ExecutionIdentity,
     session: Session | undefined,
     result: Awaited<ReturnType<typeof runReviewWithEvidence>>,
+    isInputCurrent: () => boolean,
     batch?: BatchContext,
   ): PreExecuteDecision {
     const isSubagent = session?.header?.origin === 'subagent'
     let resolution = identity.configVersion !== configVersionOf(config, tierOf(identity.sessionId))
       ? { fallback: 'cancelled' as const, error: t('等待裁决时审核设置已改变，请按当前设置重试', 'review settings changed while awaiting the verdict; retry under current settings') }
-      : result.resolution
+      : !isInputCurrent() ? { fallback: 'cancelled' as const, error: inputChanged() } : result.resolution
     if (!isReviewFailure(resolution)) {
       resolution = { ...resolution, reason: redactReviewEvidence(resolution.reason),
         ...(resolution.question === undefined ? {} : { question: redactReviewEvidence(resolution.question) }) }
@@ -811,10 +866,10 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
         if (isSubagent) {
           // No answerer chain for subagents (policy locked `never`): settle
           // directly and let the guard consume the bound single-use allow.
-          settlement.settle(identity.callId, exec.name, 'allowed-once', 'reviewer')
+          settlement.settle(identity.callId, exec.name, 'allowed-once', 'reviewer', isInputCurrent)
           return { kind: 'allow' }
         }
-        decisions.set(identity.callId, { kind: 'allow', reason: verdict.reason, decidedBy: 'reviewer' })
+        decisions.set(identity.callId, { kind: 'allow', reason: verdict.reason, decidedBy: 'reviewer', isInputCurrent })
         return { kind: 'ask', reason: `${prefix()} ${t(`审核已允许 ${exec.name}，等待宿主确认`, `Reviewer allowed ${exec.name} (pending host settlement)`)}` }
       }
       if (verdict.decision === 'deny') {
@@ -835,15 +890,16 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     }
     // Failure: cancellation is terminal and NEVER becomes a human question.
     if (resolution.fallback === 'cancelled') {
-      settlement.invalidate(identity.callId, 'review cancelled')
+      settlement.invalidate(identity.callId, resolution.error)
       if (!isSubagent) decisions.set(identity.callId, { kind: 'cancelled', reason: resolution.error, decidedBy: 'fallback' })
-      feedback.set(identity.callId, `${prefix()} ${t('审核已取消或权限／设置已改变；本操作未执行。请按当前模式继续。', 'Review cancelled or permission/settings changed; this action was not executed. Continue under the current mode.')}`)
-      return { kind: 'ask', reason: `${prefix()} ${t(`${exec.name} 审核取消，操作未执行`, `Review cancelled before a verdict for ${exec.name} — not executed`)}` }
+      const reason = `${prefix()} ${t(`${exec.name} 审核取消，操作未执行`, `Review cancelled for ${exec.name} — not executed`)}. ${redactReviewEvidence(resolution.error)}`
+      feedback.set(identity.callId, reason)
+      return { kind: 'ask', reason }
     }
     if (config.fallbackPolicy === 'allow-once') {
       // Deliberately dangerous, admin-opt-in (documented): the failure grants
       // one bound, single-use execution.
-      settlement.settle(identity.callId, exec.name, 'allowed-once', 'fallback')
+      settlement.settle(identity.callId, exec.name, 'allowed-once', 'fallback', isInputCurrent)
       return { kind: 'allow' }
     }
     if (config.fallbackPolicy === 'rejected') {
@@ -904,7 +960,13 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     if (decision === undefined) return next()
     decisions.delete(callId)
     if (decision.kind === 'allow') {
-      settlement.settle(callId, req.toolName, 'allowed-once', decision.decidedBy)
+      if (decision.isInputCurrent?.() === false) {
+        const reason = inputChanged()
+        settlement.invalidate(callId, reason)
+        feedback.set(callId, `${prefix()} ${reason}`)
+        return 'cancelled'
+      }
+      settlement.settle(callId, req.toolName, 'allowed-once', decision.decidedBy, decision.isInputCurrent)
       return 'allowed-once'
     }
     if (decision.kind === 'deny') {
@@ -976,7 +1038,7 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     const sensitive = sensitiveCalls.get(callId)
     if (sensitive !== undefined) {
       sensitiveCalls.delete(callId)
-      if (result?.isError !== true) {
+      if (sensitive.isCurrent() && result?.isError !== true) {
         const destination = mainRouteOf(sessionsById.get(sensitive.requestRef))
         if (destination !== undefined) {
           const scan = scanOutbound({ result: result?.content })
@@ -1012,12 +1074,10 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
     language: () => language.get(),
     ledger: disclosureLedger,
     requestPrivacyReview,
-    // 终审 R3(2)/安装前复核 R3: gated sessions AND reviewer children are the
-    // gate's own outbound surfaces — their requests are always scanned. The
-    // review call itself also runs inside `runInReviewScope`, so "no
-    // sessionId" can never smuggle a review request past the scan as a
-    // native request; native sessions keep native semantics.
-    isGatedRequest: isCurrentlyGated,
+    // Enhanced protects work requests. Both tiers protect independent
+    // reviewer traffic, including inline reviews without a child session.
+    isGatedRequest: usesOutboundPrivacy,
+    isReviewerRequest: id => reviewerSessions.has(id as SessionId),
     restart: (options) => {
       const llm = ctx.get('llm')
       if (!llm) throw new Error('llm service unavailable')
@@ -1029,7 +1089,7 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
       )
       if (outboundEvents.length > 50) outboundEvents.length = 50
       if (event.action === 'block-refused' || event.action === 'block-unsent') {
-        const tier = tierOf(event.requestRef)
+        const tier = event.reviewing ? tierOf(event.requestRef) : 'strict'
         auditLog.append({ at: event.at, sessionId: event.requestRef, callId: randomUUID(), toolName: 'llm/stream',
           tier, configVersion: configVersionOf(config, tier), model: `${event.destination.provider}/${event.destination.model}`,
           decision: 'outbound-blocked', reason: event.reason, durationMs: null, usage: 'unknown' })
@@ -1068,20 +1128,22 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
   // 部署后补: config adjustment lives ONLY in the in-client settings panel
   // (its JSON API is the `views` surface below) — no chat command, no
   // browser-link page (user decision 2026-10-31).
-  const switchTier = (sessionId: string, tier: string): string => {
+  const switchTier = (sessionId: string, tier: string): void => {
     const next = tier === 'strict' ? 'strict' : 'daily'
     const session = sessionOf(sessionId)
     const service = presets()
     if (service?.set) {
       if (!session) throw new Error('session not loaded')
       if (session.header.origin === 'subagent') throw new Error('subagent tier follows its parent')
-      service.set(session, presetForTier(next))
+      const preset = presetForTier(next)
+      if (service.current?.(session) === preset) return
+      service.set(session, preset)
     } else {
       // Structural test seams have no native persistence service.
+      if (tiers.get(sessionId) === next) return
       tiers.set(sessionId, next)
     }
     invalidateTier(sessionId)
-    return `会话 ${sessionId || '(当前)'} 档位已切换为 ${next}（旧审核结果对新档位失效）`
   }
   const views: SettingsViewSources = {
     setLanguage: value => language.set(value),

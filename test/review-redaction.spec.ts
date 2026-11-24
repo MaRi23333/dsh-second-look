@@ -113,7 +113,7 @@ describe('review evidence redaction (安装前复核 R3)', () => {
     expect(prompt).toContain('When sure it is unsafe, DENY')
   })
 
-  it('never sends raw secrets and uses a stable reviewer cache identity separate from the work session', async () => {
+  it.each(['daily', 'strict'] as const)('redacts %s review evidence and uses a stable reviewer cache identity separate from the work session', async tier => {
     const session = secretSession('redact-chain')
     appendRequestHeader(session, { provider: 'mock', model: 'mock-model' })
     const script = (): ScriptedReview => ({ verdict: { decision: 'allow', reason: 'looks safe' } })
@@ -122,7 +122,8 @@ describe('review evidence redaction (安装前复核 R3)', () => {
     ctx.provide('subagents', makeSubagents(script, undefined, { withStart: false }) as never)
     ctx.provide('llm', llm as never)
     ctx.provide('tools', {})
-    const resolution = await runReview(ctx, config(), secretRequest(session), new ReviewerChildren(), undefined, { prompt: secretPromptOptions() })
+    const options = { prompt: { ...secretPromptOptions(), tier } }
+    const resolution = await runReview(ctx, config(), secretRequest(session), new ReviewerChildren(), undefined, options)
     if (isReviewFailure(resolution)) throw new Error(`expected a verdict, got failure: ${resolution.error}`)
     expect(llm.calls.length).toBe(1)
     const dispatched = JSON.stringify(llm.calls[0])
@@ -132,9 +133,9 @@ describe('review evidence redaction (安装前复核 R3)', () => {
     expect(dispatched).toContain('[REDACTED]')
     expect(llm.calls[0]?.sessionId).not.toBe(session.id)
     expect(llm.calls[0]?.sessionId).toMatch(/^second-look-review-[a-f0-9]{32}$/)
-    await runReview(ctx, config(), secretRequest(session), new ReviewerChildren(), undefined, { prompt: secretPromptOptions() })
+    await runReview(ctx, config(), secretRequest(session), new ReviewerChildren(), undefined, options)
     expect(llm.calls[1]?.sessionId).toBe(llm.calls[0]?.sessionId)
-    await runReview(ctx, config(), secretRequest(secretSession('other-parent')), new ReviewerChildren(), undefined, { prompt: secretPromptOptions() })
+    await runReview(ctx, config(), secretRequest(secretSession('other-parent')), new ReviewerChildren(), undefined, options)
     expect(llm.calls[2]?.sessionId).not.toBe(llm.calls[0]?.sessionId)
   })
 })

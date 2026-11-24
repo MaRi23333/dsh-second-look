@@ -24,3 +24,16 @@ export function sessionEvents(session: SessionEventsSource | null | undefined): 
   if (typeof probe.snapshotEvents === 'function') return probe.snapshotEvents()
   return (session as { events?: readonly SessionEvent[] }).events ?? []
 }
+
+/** Last direct input affecting the active turn, including steering still in the inbox. */
+export function latestUserInputSeq(events: readonly SessionEvent[]): number | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type === 'user/message' && event.data.source?.kind === 'user') return event.seq
+    if ((event?.type as string | undefined) === 'agent/inbox/spliced') {
+      const data = event?.data as { target?: unknown; inserted?: { source?: { kind?: string } }[] } | undefined
+      if (data?.target === 'next-step' && data.inserted?.some(message => message.source?.kind === 'user')) return event?.seq
+    }
+  }
+  return undefined
+}

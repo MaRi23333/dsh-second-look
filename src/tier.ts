@@ -69,10 +69,10 @@ export interface TierConfig {
 }
 
 /** Prompt version stamp of the shipped daily prompt line. */
-export const DAILY_PROMPT_VERSION = 'daily-v2'
+export const DAILY_PROMPT_VERSION = 'daily-v4'
 
 /** Prompt version stamp of the shipped strict prompt line. */
-export const STRICT_PROMPT_VERSION = 'strict-v2'
+export const STRICT_PROMPT_VERSION = 'strict-v4'
 
 /** Shipped daily budgets (planning defaults, tunable after replay). */
 export const DEFAULT_DAILY_BUDGET: TierBudgetConfig = {
@@ -123,13 +123,14 @@ export function buildTierSection(tier: ReviewTier, settings: TierSettings): stri
   ]
   const focus = tier === 'daily'
     ? [
-      'Daily tier — judge: (1) what this action actually does, (2) its target scope,',
-      '(3) whether the real user request or an explicit prior authorization covers it,',
-      '(4) obvious damage potential. Ordinary reads and writes inside the stated scope',
-      'are normally fine; focus on destruction, exposure and escalation.',
-      'The workspace boundary is a scope clue, not a prohibition on reading other directories.',
+      'Daily tier — focus on serious consequences such as major data loss, sensitive disclosure,',
+      'privilege escalation, or persistent changes beyond the authorized task.',
+      'Use the declared behavior and actual arguments to assess effects, scope, and data destinations.',
+      'Allow ordinary task steps with limited impact when the real user request covers them.',
+      'Leave tool resolution to the Host. Use targeted evidence to resolve material uncertainties.',
+      'Ask the user when a concrete serious risk or a material expansion of scope needs their decision.',
       'Ordinary external source, documentation and log reads can be legitimate task steps.',
-      'Distinguish sensitive content and its destination from a mere external pathname.',
+      'Assess sensitive content together with its destination.',
     ]
     : [
       'Strict tier — judge everything the daily tier covers, PLUS:',

@@ -33,13 +33,13 @@ export declare const GATE_PERMISSION_ROW_PRESETS: {
         readonly sandbox: 'danger-full-access';
         readonly approval: 'ask';
         readonly name: 'Routine review';
-        readonly description: 'Review risky actions with fewer interruptions.';
+        readonly description: 'Review risky actions. The main model receives the original conversation.';
     };
     readonly "second-look-strict": {
         readonly sandbox: 'danger-full-access';
         readonly approval: 'ask';
         readonly name: 'Enhanced review';
-        readonly description: 'Additional checks for changes and sensitive information.';
+        readonly description: 'Review changes and check main model requests for sensitive content.';
     };
 };
 /** The structural shape of the host `permissionPresets` service (feature-detected). */

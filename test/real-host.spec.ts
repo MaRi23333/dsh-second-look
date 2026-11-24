@@ -13,7 +13,7 @@ import LlmRuntime, { LlmAdapter, createUserMessage, ToolCallId, ReasoningEffortI
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import ApprovalService, { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import PermissionPresets from '@deepseek-ai/dsh-permission-presets'
 import FsLocal from '@deepseek-ai/dsh-fs-local'
@@ -42,8 +42,8 @@ function textChunks(text: string): StreamChunk[] {
   return [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
     { type: 'block-end', index: 0, block: { type: 'text', text } }, { type: 'finish', reason: { kind: 'stop' } }]
 }
-function callChunks(id: string, name = 'pwsh'): StreamChunk[] {
-  const args = JSON.stringify({ command: 'Write-Output "dsh-second-look tool-call test ok"' })
+function callChunks(id: string, name = 'pwsh', parameters: Record<string, string> = { command: 'Write-Output "dsh-second-look tool-call test ok"' }): StreamChunk[] {
+  const args = JSON.stringify(parameters)
   return [{ type: 'block-start', index: 0, blockType: 'tool-call' },
     { type: 'tool-call-delta', index: 0, id: ToolCallId(id), name, argumentsDelta: args },
     { type: 'block-end', index: 0, block: { type: 'tool-call', id: ToolCallId(id), name, arguments: args } },
@@ -106,6 +106,43 @@ async function host(decision: 'allow' | 'deny' | 'ask_user' = 'allow', cwd = pro
 }
 
 describe('real rc.5 host pipeline', () => {
+  it('reviews the scoped declaration of a registered session_trace call', async () => {
+    const h = await host()
+    const secret = 'FAKE_TOOL_SCHEMA_SECRET_12345678'
+    let executed = 0
+    const definition: ToolDefinition = {
+      name: 'session_trace',
+      description: 'Read the authorized session lineage around one session.',
+      parameters: { type: 'object', properties: {
+        session_id: { type: 'string', description: `The current session is used when omitted. token=${secret}` },
+      } },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
+      async execute() { executed++; return 'session lineage result' },
+    }
+    h.ctx.tools.register({ ...definition, description: 'SHADOWED GLOBAL DECLARATION' })
+    h.ctx.tools.register({ ...definition, name: 'unrelated_query', description: 'UNRELATED REGISTRY DECLARATION' })
+    h.agent.ctx.tools.register(definition)
+    let humanRequests = 0
+    h.ctx.on('approval/request', async () => { humanRequests++; return 'rejected' as const })
+
+    await h.turn('Check the current session lineage.', [callChunks('session-lineage', 'session_trace', {}), textChunks('done')])
+
+    const reviews = h.requests.filter(request => request.provider === 'review-test')
+    expect(reviews).toHaveLength(1)
+    const input = JSON.stringify(reviews[0]?.messages)
+    expect(input).toContain('Read the authorized session lineage around one session.')
+    expect(input).toContain('The current session is used when omitted.')
+    expect(input).toContain('Check the current session lineage.')
+    expect(input).toContain('Leave tool resolution to the Host.')
+    expect(input).toContain('[REDACTED]')
+    expect(input).not.toContain(secret)
+    expect(input).not.toContain('SHADOWED GLOBAL DECLARATION')
+    expect(input).not.toContain('UNRELATED REGISTRY DECLARATION')
+    expect(input).not.toContain('unrecognized tool or adapter')
+    expect(executed).toBe(1)
+    expect(humanRequests).toBe(0)
+  })
+
   it('keeps native custom approval human-controlled until an explicit review selection', async () => {
     const h = await host('allow')
     h.ctx.permissionPresets.set(h.agent.session, 'danger-full-access')
@@ -160,6 +197,7 @@ describe('real rc.5 host pipeline', () => {
     try {
       const first = await host('deny', process.cwd(), new MemorySettingsPersistence(), false, new FileAuditPersistence(dir))
       await first.turn('deny a tool', [callChunks('durable-denial'), textChunks('continue')])
+      first.ctx.permissionPresets.set(first.agent.session, 'second-look-strict')
       await first.turn('do not publish token=FAKE_HOST_SECRET_12345678')
       expect(first.gate.audit.blockedRecent().some(r => r.decision === 'deny')).toBe(true)
       expect(first.gate.audit.blockedRecent().some(r => r.decision === 'outbound-blocked')).toBe(true)
@@ -219,6 +257,32 @@ describe('real rc.5 host pipeline', () => {
     expect(h.executed()).toBe(1)
   }, 3000)
 
+  it('voids an in-flight allow while a real user instruction is still in the next-step inbox', async () => {
+    const h = await host()
+    const reviewing = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    h.setReviewer(async function* () {
+      reviewing.resolve()
+      await released.promise
+      yield* textChunks('{"decision":"allow","reason":"earlier request authorized this"}')
+    })
+    const running = h.turn('Run the marker.', [callChunks('before-steer'), textChunks('Stopping.')])
+    await reviewing.promise
+    const steer = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Stop that tool.' }] })
+    try {
+      h.agent.steer(steer)
+      expect(h.agent.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.id === steer.id)).toBe(false)
+    } finally {
+      released.resolve()
+    }
+    const events = await running
+    expect(h.executed()).toBe(0)
+    expect(events.some(event => event.type === 'approval/decided' && event.data.outcome === 'cancelled')).toBe(true)
+    expect(h.gate.audit.recent()).toContainEqual(expect.objectContaining({
+      decision: 'cancelled', reason: 'New user input invalidated the previous review',
+    }))
+  }, 3000)
+
   it('inherits the parent tier across grandchildren and cancels child review on parent switch', async () => {
     const h = await host()
     h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
@@ -267,8 +331,9 @@ describe('real rc.5 host pipeline', () => {
     expect(JSON.stringify(events)).toContain('继续其他工作')
     expect(h.gate.status().pendingEntries).toBe(0)
   })
-  it('protects the FIRST outbound request, redacts a refused disclosure, and survives repeated followups', async () => {
+  it('protects the first Enhanced request and continues after refused disclosure', async () => {
     const h = await host('deny')
+    h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
     const secret = 'ghp_FAKE_HEALTH_SECRET_12345678'
     const events = await h.turn(`do not publish this token=${secret}`)
     expect(h.requests.filter(r => r.provider === 'review-test')).toHaveLength(1)
@@ -282,8 +347,129 @@ describe('real rc.5 host pipeline', () => {
     expect(JSON.stringify(h.requests)).not.toContain(secret)
     expect(h.agent.status).toBe('idle')
   })
+  it('repeatedly switches Enhanced and Routine within one session while preserving the Routine prefix', async () => {
+    const h = await host('deny')
+    const secret = 'FAKE_TIER_SWITCH_SECRET_12345678'
+    let lastRoutine: GenerateOptions | undefined
+    for (const tier of ['daily', 'strict', 'daily', 'strict', 'daily'] as const) {
+      h.gate.setTier(String(h.agent.id), tier)
+      expect(h.gate.getTier(String(h.agent.id))).toBe(tier)
+      const before = h.requests.length
+      await h.turn(lastRoutine === undefined ? `fixture token=${secret}` : `continue in ${tier}`)
+      const outgoing = h.requests.slice(before)
+      const main = outgoing.filter(request => request.provider === 'main-test')
+      expect(main).toHaveLength(1)
+      const request = main[0]!
+      expect(request.sessionId).toBe(h.agent.id)
+      expect(h.agent.status).toBe('idle')
+      if (tier === 'strict') {
+        expect(outgoing.filter(item => item.provider === 'review-test')).toHaveLength(1)
+        expect(JSON.stringify(outgoing)).not.toContain(secret)
+        expect(JSON.stringify(request.messages)).toContain('[REDACTED]')
+      } else {
+        expect(outgoing).toHaveLength(1)
+        expect(JSON.stringify(request.messages)).toContain(secret)
+        if (lastRoutine !== undefined) {
+          expect(request.system).toBe(lastRoutine.system)
+          expect(request.tools).toEqual(lastRoutine.tools)
+          expect(request.messages.slice(0, lastRoutine.messages.length)).toEqual(lastRoutine.messages)
+        }
+        lastRoutine = request
+      }
+    }
+  })
+  it.each(['daily', 'strict'] as const)('settles a paused Enhanced request safely when switched to %s', async tier => {
+    const h = await host('deny')
+    h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
+    let entered!: () => void
+    const reviewing = new Promise<void>(resolve => { entered = resolve })
+    let release!: () => void
+    const released = new Promise<void>(resolve => { release = resolve })
+    h.setReviewer(async function* () { entered(); await released; yield* textChunks('{"decision":"allow","reason":"stale disclosure"}') })
+    const secret = 'FAKE_PENDING_DISCLOSURE_12345678'
+    const running = h.turn(`do not publish token=${secret}`)
+    await reviewing
+    h.ctx.permissionPresets.set(h.agent.session, 'second-look-daily')
+    if (tier === 'strict') h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
+    release()
+    await running
+    const main = h.requests.filter(request => request.provider === 'main-test')
+    expect(main).toHaveLength(1)
+    expect(JSON.stringify(main)).not.toContain(secret)
+    expect(JSON.stringify(main)).toContain('[REDACTED]')
+    expect(h.gate.audit.blockedRecent().some(record => record.decision === 'outbound-blocked' && record.tier === 'strict')).toBe(true)
+    h.setReviewer(async function* () { yield* textChunks('{"decision":"deny","reason":"fresh disclosure rejected"}') })
+    const before = h.requests.length
+    await h.turn('continue the same conversation')
+    const next = h.requests.slice(before)
+    expect(next.filter(request => request.provider === 'main-test')).toHaveLength(1)
+    if (tier === 'strict') {
+      expect(next.filter(request => request.provider === 'review-test')).toHaveLength(1)
+      expect(JSON.stringify(next)).not.toContain(secret)
+    } else {
+      expect(next).toHaveLength(1)
+      expect(JSON.stringify(next[0]?.messages)).toContain(secret)
+    }
+    expect(h.agent.status).toBe('idle')
+  }, 3000)
+  it('lets a dispatched Routine stream finish before applying Enhanced to the next request', async () => {
+    const h = await host('deny')
+    const secret = 'FAKE_STREAM_BEFORE_SWITCH_12345678'
+    let entered!: () => void
+    const streaming = new Promise<void>(resolve => { entered = resolve })
+    let release!: () => void
+    const released = new Promise<void>(resolve => { release = resolve })
+    h.ctx.on('llm/stream', async function* (options, next) {
+      for await (const chunk of next()) {
+        if (options.provider === 'main-test' && chunk.type === 'block-start') {
+          entered()
+          await released
+        }
+        yield chunk
+      }
+    })
+    const running = h.turn(`fixture token=${secret}`, [textChunks('routine stream completed')])
+    await streaming
+    h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
+    release()
+    expect(JSON.stringify(await running)).toContain('routine stream completed')
+    expect(h.requests).toHaveLength(1)
+    expect(JSON.stringify(h.requests[0]?.messages)).toContain(secret)
+    await h.turn('continue under Enhanced')
+    expect(JSON.stringify(h.requests.slice(1))).not.toContain(secret)
+    expect(JSON.stringify(h.requests.at(-1)?.messages)).toContain('[REDACTED]')
+    expect(h.agent.status).toBe('idle')
+  }, 3000)
+  it('reviews a sensitive tool result that returns after its Routine approval was invalidated', async () => {
+    const h = await host()
+    const secret = 'FAKE_RESULT_AFTER_SWITCH_12345678'
+    let entered!: () => void
+    const executing = new Promise<void>(resolve => { entered = resolve })
+    let release!: () => void
+    const released = new Promise<void>(resolve => { release = resolve })
+    h.ctx.tools.register({
+      name: 'read', description: 'Synthetic read', parameters: { type: 'object', properties: { file_path: { type: 'string' } } },
+      output: { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+        render: (_args, result) => [{ type: 'text', text: String((result as { text: string }).text) }] },
+      async execute() { entered(); await released; return { text: `token=${secret}` } },
+    })
+    const running = h.turn('read the synthetic fixture', [callChunks('pending-read', 'read', { file_path: '.env' })])
+    await executing
+    h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
+    h.setReviewer(async function* () { yield* textChunks('{"decision":"deny","reason":"disclosure rejected"}') })
+    release()
+    const events = await running
+    expect(events.some(event => event.type === 'tool/result' && event.data.message.isError === false)).toBe(true)
+    const reviewer = h.requests.filter(request => request.provider === 'review-test')
+    expect(reviewer).toHaveLength(2)
+    expect(JSON.stringify(reviewer[1]?.messages)).toContain('PRIVACY DISCLOSURE review')
+    expect(JSON.stringify(h.requests)).not.toContain(secret)
+    expect(JSON.stringify(h.requests.at(-1)?.messages)).toContain('[REDACTED]')
+    expect(h.agent.status).toBe('idle')
+  }, 3000)
   it('repeatedly switches to every native preset and back without sticky interception', async () => {
     const h = await host('deny')
+    h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
     await h.turn('token=FAKE_SWITCH_SECRET_123456')
     for (const native of ['danger-full-access', 'workspace-write', 'read-only', 'danger-full-access']) {
       h.ctx.permissionPresets.set(h.agent.session, native)
@@ -293,7 +479,7 @@ describe('real rc.5 host pipeline', () => {
       expect(h.requests.slice(before).every(r => r.provider === 'main-test')).toBe(true)
       // Native full-access intentionally sends its own unmodified context.
       expect(JSON.stringify(h.requests.at(-1)?.messages)).toContain('FAKE_SWITCH_SECRET_123456')
-      h.ctx.permissionPresets.set(h.agent.session, 'second-look-daily')
+      h.ctx.permissionPresets.set(h.agent.session, 'second-look-strict')
       const gateBefore = h.requests.length
       await h.turn('back in second-look')
       expect(JSON.stringify(h.requests.slice(gateBefore))).not.toContain('FAKE_SWITCH_SECRET_123456')

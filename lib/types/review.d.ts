@@ -83,7 +83,7 @@ export declare function reviewEvidenceBlockers(payload: unknown): string | undef
 /**
  * Recursively redact sensitive values from a JSON value: any object key
  * matching {@link SENSITIVE_KEY_PATTERN} has its value replaced, and any
- * free-form string is passed through {@link redactInlineSecrets}.
+ * free-form string is passed through {@link redactReviewEvidence}.
  * @param value - the detached JSON value to sanitize.
  * @returns a detached copy with sensitive values redacted.
  */
@@ -166,18 +166,13 @@ export interface ReviewPromptOptions {
  */
 export declare function renderEvidenceRounds(rounds: readonly EvidenceRoundRecord[] | undefined): string;
 /**
- * Build the reviewer prompt: role, the pending request's tool/reason/context/
- * workspace, the resolved risk rules, the tier policy section, the ruling
- * policy text, the optional human-override context, prior evidence rounds,
- * and the four-verdict contract.
+ * Build the reviewer prompt: pending action, decision evidence, and the
+ * four-verdict contract.
  * @param request - the pending approval request.
  * @param config - resolved config (rules, guidance, budgets).
  * @param override - a pending human one-shot override, when one applies.
- * @param verdictChannel - how the reviewer is expected to answer: the
- *   `structured_output` tool (the isolated child has one) or a bare JSON text
- *   (the tool-less call has no tools at all, so naming a tool would ask for
- *   something the model cannot do).
- * @param options - tier policy and prior evidence rounds (T03).
+ * @param verdictChannel - structured tool output or bare JSON on the tool-less route.
+ * @param options - tier policy and prior evidence rounds.
  * @returns the exact prompt text block.
  */
 export declare function buildReviewPrompt(request: ReviewRequest, config: ResolvedConfig, override?: OverrideContext, verdictChannel?: 'structured_output' | 'text', options?: ReviewPromptOptions): string;

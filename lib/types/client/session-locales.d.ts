@@ -8,6 +8,7 @@ export declare const accessZh: {
     'review.offline': string;
     'review.retry': string;
     'review.failed': string;
+    'review.downgraded': string;
     mode: string;
     close: string;
     'preset.readOnly': string;
@@ -36,6 +37,7 @@ export declare const accessEn: {
     'review.offline': string;
     'review.retry': string;
     'review.failed': string;
+    'review.downgraded': string;
     mode: string;
     close: string;
     'preset.readOnly': string;

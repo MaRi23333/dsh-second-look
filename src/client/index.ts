@@ -15,6 +15,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { GateSettings, type GateSettingsInjected } from './SettingsCard.tsx'
 import { SessionPicker, type SessionPickerInjected } from './SessionPicker.tsx'
@@ -36,8 +37,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Browser services required by the settings section. */
-export const inject = ['slots', 'locale', 'connection', 'sessions', 'remote', 'remote.permissionPresets']
+/** Browser services used by settings and the current-session permission picker. */
+export const inject = ['slots', 'locale', 'connection', 'sessions', 'remote', 'remote.permissionPresets', 'conversation']
 
 /** Register the locale dictionaries through the structural locale surface. */
 function registerLocale(
@@ -70,7 +71,10 @@ export function apply(ctx: ClientContext): void {
   }
   const host = ctx as unknown as CatalogHost & {
     remote: Parameters<typeof loadReviewerCatalog>[0]
-    sessions: { binding: (id: string) => { session: { command: (line: string) => Promise<{ ok: boolean; value?: { matched: boolean } }> } } | undefined }
+    sessions: {
+      binding: (id: string) => { session: { command: (line: string) => Promise<{ ok: boolean; value?: { matched: boolean } }> } } | undefined
+      scope?: (id: string) => ClientContext | undefined
+    }
   }
   if (typeof ctx.locale.getLocale === 'function') effectCtx.effect(() => syncHostLanguage(
     () => ctx.locale.getLocale().active,
@@ -90,6 +94,12 @@ export function apply(ctx: ClientContext): void {
       sessionKey: String(sessionId),
       catalogStore: catalog.store,
       retryCatalog: catalog.refresh,
+      notify: message => {
+        try {
+          const scope = host.sessions.scope?.(String(sessionId))
+          if (scope !== undefined) scope.get('conversation')?.input.for(scope).notify('info', message)
+        } catch { /* The session input may have been disposed during navigation. */ }
+      },
       select: async preset => {
         const session = host.sessions.binding(String(sessionId))?.session
         if (session === undefined) return false

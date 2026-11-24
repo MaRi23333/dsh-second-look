@@ -143,7 +143,7 @@ describe('two-tier evidence loop', () => {
     expect(result.resolution.decision).toBe('allow')
     expect(result.rounds).toBe(0)
     expect(result.tier).toBe('daily')
-    expect(result.promptVersion).toBe('daily-v2')
+    expect(result.promptVersion).toBe('daily-v4')
     expect(llm.calls.length).toBe(1)
     expect(calls()).toBe(1)
     expect(fs.probed.length).toBe(0)
@@ -195,7 +195,7 @@ describe('two-tier evidence loop', () => {
     expect(result.resolution.decision).toBe('allow')
     expect(result.rounds).toBe(3)
     expect(llm.calls.length).toBe(4)
-    expect(result.promptVersion).toBe('strict-v2')
+    expect(result.promptVersion).toBe('strict-v4')
   })
 
   it('uses the strict-tier reviewer override for the strict review only', async () => {

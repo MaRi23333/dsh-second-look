@@ -68,11 +68,12 @@ describe('tier budgets and defaults', () => {
 })
 
 describe('tier prompt sections', () => {
-  it('scopes the daily tier to action/scope/authorization/obvious damage', () => {
+  it('focuses daily review on serious effects and user-authorized scope', () => {
     const text = buildTierSection('daily', DEFAULT_TIER_CONFIG.daily)
     expect(text).toContain(`Review tier: daily (prompt ${DAILY_PROMPT_VERSION})`)
-    expect(text).toContain('what this action actually does')
-    expect(text).toContain('obvious damage')
+    expect(text).toContain('assess effects, scope, and data destinations')
+    expect(text).toContain('when the real user request covers them')
+    expect(text).toContain('major data loss')
     expect(text).not.toContain('persistence effects')
   })
 

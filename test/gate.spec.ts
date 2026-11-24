@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import {
   comparablePath,
@@ -222,6 +223,67 @@ describe('gate integration (T04)', () => {
     expect(outcome).toBe('allowed-once')
     expect(bus.guard(exec)).toBeUndefined()
     expect(bus.guard(exec)).toContain('already consumed')
+  })
+
+  it('sends Config query facts to the reviewer without exempting a tool by its name', async () => {
+    const { bus, llm, session } = gateHarness(scriptOf([ALLOW]))
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'Check the configuration for this update. token="test-secret-for-redaction"' }],
+    }), { surfaceOp: 'append' })
+    const exec = execOf(session, 'cordis_inspect_query', { platform: 'host', provider: 'Config', method: 'listConfigs' })
+    expect(await bus.pre(exec)).toMatchObject({ kind: 'ask' })
+    expect(llm.calls).toHaveLength(1)
+    const input = JSON.stringify(llm.calls[0])
+    expect(input).toContain('Check the configuration for this update.')
+    expect(input).toContain('bundled Host Config.listConfigs')
+    expect(input).toContain('when the selected handler is the bundled Config provider')
+    expect(input).toContain('[REDACTED]')
+    expect(input).not.toContain('test-secret-for-redaction')
+  })
+
+  it('reviews destructive effects of a new tool using the step-admitted declaration', async () => {
+    const { bus, llm, session } = gateHarness(scriptOf([{
+      decision: 'ask_user', reason: 'The action deletes recovery copies.', question: 'Delete the profile backups?',
+    }]))
+    const toolSet = {}
+    const exec = execOf(session, 'purge_profile_backups', { profile: 'desktop' }, { toolSet })
+    bus.tools.get = () => ({ description: 'Unadmitted registration', parameters: {} })
+    bus.tools.executable = (name, agent, admission) => {
+      expect(name).toBe(exec.name)
+      expect(agent).toBe(exec.agent)
+      expect(admission).toBe(toolSet)
+      return { description: 'Permanently delete all backups of the selected profile.', parameters: {} }
+    }
+
+    expect(await bus.pre(exec)).toMatchObject({ kind: 'ask', reason: expect.stringContaining('Delete the profile backups?') })
+    expect(llm.calls).toHaveLength(1)
+    const input = JSON.stringify(llm.calls[0])
+    expect(input).toContain('Permanently delete all backups of the selected profile.')
+    expect(input).toContain('concrete serious risk or a material expansion of scope')
+    expect(input).not.toContain('Unadmitted registration')
+  })
+
+  it.each(['next-step', 'next-turn'] as const)('honors the %s queue after automatic settlement', async target => {
+    const { bus, session } = gateHarness(scriptOf([ALLOW]))
+    const exec = execOf(session, SHELL_EXEC.name, SHELL_EXEC.args)
+    await bus.pre(exec)
+    expect(await bus.ask({ callId: exec.callId, toolName: exec.name }, async () => 'unavailable')).toBe('allowed-once')
+    session.append('agent/inbox/spliced', { target, start: 0, inserted: [createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'Hold the operation.' }],
+    })] })
+    if (target === 'next-step') expect(bus.guard(exec)).toContain('New user input invalidated')
+    else expect(bus.guard(exec)).toBeUndefined()
+  })
+
+  it('does not start a review for an old action when user steering is already pending', async () => {
+    const { bus, llm, session } = gateHarness(scriptOf([ALLOW]))
+    const pending = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Hold the operation.' }] })
+    const exec = execOf(session, SHELL_EXEC.name, SHELL_EXEC.args, { agent: { session, inbox: { nextStep: [pending] } } })
+    const decision = await bus.pre(exec)
+    expect(decision).toMatchObject({ kind: 'ask', reason: expect.stringContaining('New user input invalidated') })
+    expect(await bus.ask({ callId: exec.callId, toolName: exec.name }, async () => 'allowed-once')).toBe('cancelled')
+    expect(llm.calls).toHaveLength(0)
   })
 
   it('denies with model-visible boundary text and never executes', async () => {
@@ -439,8 +501,8 @@ describe('gate integration (T04)', () => {
     expect(handle.status().defaultTier).toBe('strict')
   })
 
-  it('grants disclosure of an allowed sensitive read to the session route only (T06)', async () => {
-    const { bus, handle, session, llm } = gateHarness(scriptOf([{ decision: 'allow', reason: 'user asked for this config file' }]))
+  it('grants Enhanced disclosure of an allowed sensitive read to the session route only', async () => {
+    const { bus, handle, session, llm } = gateHarness(scriptOf([{ decision: 'allow', reason: 'user asked for this config file' }]), undefined, 'second-look-strict')
     // the session's main-model route is the disclosed destination
     appendRequestHeader(session, { provider: 'deepseek-official', model: 'deepseek-flash' })
     const exec = execOf(session, 'read', { file_path: '/srv/.env' })
@@ -470,10 +532,11 @@ describe('gate integration (T04)', () => {
       sessionId: String(session.id),
     })).toBe('unknown')
     // F04 end-to-end: the granted content flows OUTBOUND without a new review...
-    const first = await bus.stream({ sessionId: String(session.id), messages: [{ text: 'SECRET=sk-live-abcdef123456' }] })
-    expect(first.sent).toBe(1)
-    // ...while another DESTINATION needs a fresh decision (one privacy review)
     const before = llm.calls.length
+    const first = await bus.stream({ sessionId: String(session.id), provider: 'deepseek-official', model: 'deepseek-flash', messages: [{ text: 'SECRET=sk-live-abcdef123456' }] })
+    expect(first.sent).toBe(1)
+    expect(llm.calls.length).toBe(before)
+    // ...while another DESTINATION needs a fresh decision (one privacy review)
     const second = await bus.stream({
       sessionId: String(session.id),
       provider: 'other-provider',

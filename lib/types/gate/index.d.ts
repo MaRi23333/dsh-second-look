@@ -32,6 +32,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Session } from '@deepseek-ai/dsh-session';
 import { type ResolvedConfig } from '../config.js';
+import type { ToolDeclaration } from '../review-types.js';
 import type { ProbeFileSystem } from '../evidence/probe.js';
 import { type TargetFileSystem } from '../evidence/path-inspect.js';
 import { type ReviewTier } from '../tier.js';
@@ -51,6 +52,8 @@ export interface ExecLike {
     readonly arguments: unknown;
     readonly agent?: AgentLike | undefined;
     readonly signal?: AbortSignal | undefined;
+    /** Step admission supplied by hosts with conditional tool registration. */
+    readonly toolSet?: unknown;
     /** Present on PTC inner dispatches (T00 run5/run6). */
     readonly parent?: unknown;
 }
@@ -59,6 +62,13 @@ export interface AgentLike {
     readonly id?: unknown;
     readonly session?: Session | undefined;
     readonly parentAgent?: ParentAgentLike | undefined;
+    readonly inbox?: {
+        readonly nextStep: readonly {
+            readonly source: {
+                readonly kind: string;
+            };
+        }[];
+    };
 }
 /** The structural approval request crossing `approval/request`. */
 export interface ApprovalReqLike {
@@ -81,6 +91,8 @@ export type ApprovalOutcomeLike = 'allowed-once' | 'rejected' | 'cancelled' | 'u
 export interface ToolsSeam {
     guard(checker: (exec: ExecLike) => string | undefined): () => void;
     register?(tool: unknown): () => void;
+    get?(name: string, agent?: AgentLike): ToolDeclaration | undefined;
+    executable?(name: string, agent?: AgentLike, toolSet?: unknown): ToolDeclaration | undefined;
 }
 /** The event/tool seams the gate wires into (the host context, or a test bus). */
 export interface GateSeamsLike {

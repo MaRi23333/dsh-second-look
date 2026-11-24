@@ -24,17 +24,17 @@ If you want an AI to review shell commands while you approve file writes yoursel
 
 **Stepping away from your desk?** Pair Second Look with [ServerChan Watchdog](https://github.com/MaRi23333/dsh-serverchan-watchdog). Once configured, it sends a phone notification when a tool approval has been waiting in DSH longer than your chosen delay (five minutes by default). Return to DSH to approve or decline.
 
-> **Beta 0.1.3** · Requires DSH `>=0.2.1-rc.5 <0.3.0-0` and a reviewer model you trust.
+> **Beta 0.1.4** · Requires DSH `>=0.2.1-rc.5 <0.3.0-0` and a reviewer model you trust.
 
 ## Download and install
 
 Requires DSH `>=0.2.1-rc.5 <0.3.0-0`. You can install it in the desktop app without opening a terminal.
 
-1. In the sidebar, open **Plugins → Add plugin** and enter `dsh-second-look@latest`. To install this version specifically, enter `dsh-second-look@0.1.3`.
+1. In the sidebar, open **Plugins → Add plugin** and enter `dsh-second-look@latest`. To install this version specifically, enter `dsh-second-look@0.1.4`.
 2. Select **Enable now** after installation. If a restart is requested, choose **Quit** from the application menu and reopen DSH.
 3. Look for **Settings → Second Look** to confirm it is enabled.
 
-**Prefer a download?** [Download dsh-second-look-0.1.3.tgz](https://github.com/MaRi23333/dsh-second-look/releases/download/v0.1.3/dsh-second-look-0.1.3.tgz). Leave it packed and enter its full path in the same **Add plugin** box, then enable it as above. [View on npm](https://www.npmjs.com/package/dsh-second-look)
+**Prefer a download?** [Download dsh-second-look-0.1.4.tgz](https://github.com/MaRi23333/dsh-second-look/releases/download/v0.1.4/dsh-second-look-0.1.4.tgz). Leave it packed and enter its full path in the same **Add plugin** box, then enable it as above. [View on npm](https://www.npmjs.com/package/dsh-second-look)
 
 <details>
 <summary>Install with the desktop CLI</summary>
@@ -42,11 +42,11 @@ Requires DSH `>=0.2.1-rc.5 <0.3.0-0`. You can install it in the desktop app with
 Start DSH Desktop once, select **Manage dsh Command… → Install** from the application menu, then quit the app. In a new terminal, run:
 
 ```sh
-dsh plugin --profile desktop add dsh-second-look@0.1.3
+dsh plugin --profile desktop add dsh-second-look@0.1.4
 dsh plugin --profile desktop list
 ```
 
-Once you see `dsh-second-look@0.1.3`, reopen Desktop and enable the plugin. Use the `dsh` command bundled with Desktop; a standalone CLI installed with npm or run with `npx` cannot manage desktop plugins.
+Once you see `dsh-second-look@0.1.4`, reopen Desktop and enable the plugin. Use the `dsh` command bundled with Desktop; a standalone CLI installed with npm or run with `npx` cannot manage desktop plugins.
 
 </details>
 
@@ -68,6 +68,8 @@ Open the permissions menu in the message box and choose Routine or Enhanced revi
 | **Routine review** | Everyday development and tool use | Routine reads and ordinary new-file writes pass by rule. Whole-file overwrites of existing non-empty files are reviewed; risky actions go to the independent model, which can make one more round of read-only checks. |
 | **Enhanced review** | Tasks needing closer inspection of code changes, scripts, or outbound actions | Adds inspection of diffs and scripts, up to three rounds of read-only checks, and a tool the agent can use to see which files have been reviewed before it finishes. |
 
+Routine review passes main model requests through as written. Enhanced review checks them for sensitive content and uses a redacted copy when possible. Both tiers redact matched evidence before sending it to the independent reviewer. When you switch from Enhanced to Routine, the composer warns that future requests may send sensitive content from the conversation history as written.
+
 You choose the reviewer model, and Enhanced review can use a separate one. Subagents use the review settings of their parent session. The interface and prompts follow the host's English or Simplified Chinese language setting.
 
 ## Try it
@@ -79,7 +81,7 @@ You choose the reviewer model, and Enhanced review can use a separate one. Subag
 
 - **The reviewer can miss things.** It may allow a risky action or block a harmless one. Calling the reviewer also takes time and uses extra tokens.
 - **Only some actions are checked.** In sessions with review enabled, Second Look checks tool calls that go through DSH approval. It cannot stop another plugin from accessing files or the network directly. It does not replace an OS sandbox.
-- **Some requests stop without a prompt.** DSH can ask you to approve a tool call. If a request to a model contains sensitive information you haven’t approved for sharing, Second Look tries to redact it. It sends the copy only if it passes a second check; otherwise it blocks the request without asking you.
+- **Enhanced review can block a model request.** If a request contains matched sensitive content and disclosure is unauthorized, Second Look tries to redact it and checks the copy before sending. It returns a block error if it cannot safely send a copy. DSH approval dialogs are for tool calls.
 - **The AI can reply before every file has been reviewed.** In Enhanced review, the agent has to run the final file check itself. You can ask it to list any files still awaiting review before it finishes.
 
 See the [usage and technical guide](https://github.com/MaRi23333/dsh-second-look/blob/main/docs/TECHNICAL.en.md) for configuration, retention, and the full security boundaries.

@@ -20,6 +20,7 @@ export interface SessionPickerInjected {
   catalogStore: SnapshotSource<CatalogState>
   retryCatalog: () => void
   select: (preset: string) => Promise<boolean>
+  notify: (message: string) => void
 }
 export type SessionPickerProps = PropsRuntime<'conversation.input.permission'>
   & SessionPickerInjected & PropsLocale<'second-look.permission'>
@@ -61,7 +62,7 @@ const STYLES = `
 `
 
 export function SessionPicker({
-  locked, sessionKey, catalogStore, retryCatalog, select, useProjection, t,
+  locked, sessionKey, catalogStore, retryCatalog, select, notify, useProjection, t,
 }: SessionPickerProps): React.ReactElement | null {
   const selection = useProjection('permissions')
   const state = useSyncExternalStore(catalogStore.subscribe, catalogStore.getSnapshot, catalogStore.getSnapshot)
@@ -71,6 +72,7 @@ export function SessionPicker({
   const [acknowledged, setAcknowledged] = useState(false)
   const [failed, setFailed] = useState(false)
   const request = useRef(0)
+  const previousPermission = useRef<{ sessionKey: string; value: string } | null>(null)
   const currentValue = selection?.currentValue
   const catalog = state.value
   useEffect(() => {
@@ -84,7 +86,13 @@ export function SessionPicker({
     setConfirmation(null)
     setAcknowledged(false)
   }, [sessionKey, locked, state.revision, currentValue])
-
+  useEffect(() => {
+    const previous = previousPermission.current
+    previousPermission.current = state.connected && currentValue !== undefined ? { sessionKey, value: currentValue } : null
+    if (state.connected && previous?.sessionKey === sessionKey && previous.value === STRICT && currentValue === DAILY) {
+      notify(t('review.downgraded'))
+    }
+  }, [sessionKey, state.connected, currentValue, notify, t])
 
   if (selection === undefined) return null
   const label = (value: string, name = value): string => {

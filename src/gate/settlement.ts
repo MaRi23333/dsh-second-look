@@ -51,6 +51,8 @@ export interface SettlementEntry {
   /** Invalidated entries can never pass the guard. */
   invalidated: boolean
   invalidationReason?: string
+  /** Recheck input immediately before consuming an automated approval. */
+  isInputCurrent?: (() => boolean) | undefined
 }
 
 /** Guard verification result. */
@@ -128,15 +130,17 @@ export class SettlementMap {
    * @param toolName - the tool the approval chain settled (checked against the record).
    * @param outcome - the real host outcome.
    * @param decidedBy - who decided.
+   * @param isInputCurrent - the recheck for an automated approval, when applicable.
    * @returns true when the settle was applied.
    */
-  settle(callId: string, toolName: string, outcome: SettlementOutcome, decidedBy: DecidedBy): boolean {
+  settle(callId: string, toolName: string, outcome: SettlementOutcome, decidedBy: DecidedBy, isInputCurrent?: () => boolean): boolean {
     const entry = this.entries.get(callId)
     if (entry === undefined) return false
     if (entry.consumed || entry.invalidated) return false
     if (entry.identity.toolName !== toolName) return false
     entry.decidedBy = decidedBy
     entry.outcome = outcome
+    entry.isInputCurrent = isInputCurrent
     return true
   }
 
@@ -173,9 +177,15 @@ export class SettlementMap {
     if (entry.outcome !== 'allowed-once') {
       return { ok: false, reason: t(`调用 ${identity.callId} 未获批准，操作未执行`, `approval outcome "${entry.outcome}" is not an allow for ${identity.callId}`) }
     }
+    if (entry.isInputCurrent?.() === false) {
+      const reason = t('收到新的本轮用户指令，旧审核已失效', 'New user input invalidated the previous review')
+      this.invalidate(identity.callId, reason)
+      return { ok: false, reason }
+    }
     // Single-use consumption: the entry stays as a tombstone for the precise
     // "already consumed" diagnostic; it can never pass again.
     entry.consumed = true
+    entry.isInputCurrent = undefined
     return { ok: true, decidedBy: entry.decidedBy }
   }
 
@@ -190,6 +200,7 @@ export class SettlementMap {
     if (entry === undefined) return
     entry.invalidated = true
     entry.invalidationReason = reason
+    entry.isInputCurrent = undefined
   }
 
   /**

@@ -33,13 +33,16 @@ export declare function inReviewScope(): boolean;
  * @param scan - the scan result.
  * @param destination - the outbound route.
  * @param ledger - the disclosure ledger.
- * @param requestRef - audit association (session/call).
+ * @param sessionId - audit association and disclosure scope.
+ * @param language - language for user-facing reasons.
+ * @param reviewing - whether this request is for a reviewer.
  * @returns the decision (never grants without an exact-scope record).
  */
-export declare function decideOutbound(scan: OutboundScan, destination: OutboundDestination, ledger: DisclosureLedger, sessionId?: string, language?: UiLanguage): OutboundDecision;
+export declare function decideOutbound(scan: OutboundScan, destination: OutboundDestination, ledger: DisclosureLedger, sessionId?: string, language?: UiLanguage, reviewing?: boolean): OutboundDecision;
 /** One audit event from the guard (redacted; never raw secrets). */
 export interface OutboundAuditEvent {
     readonly action: OutboundAction;
+    readonly reviewing?: boolean;
     readonly reason: string;
     readonly destination: OutboundDestination;
     readonly dataFingerprint: string;
@@ -59,12 +62,10 @@ export interface OutboundGuardDeps {
     requestPrivacyReview(scan: OutboundScan, destination: OutboundDestination, signal: AbortSignal | undefined, requestRef: string): Promise<PrivacyOutcome | PrivacyVerdict>;
     readonly restart?: (options: OutboundOptionsLike) => AsyncIterable<unknown>;
     readonly onEvent?: (event: OutboundAuditEvent) => void;
-    /**
-     * Whether the request's session is under the gate (终审 Major 1): the guard
-     * is part of the GATE and must not touch native sessions — a false return
-     * passes the request straight through.
-     */
+    /** Whether this work session uses Enhanced outbound privacy checks. */
     readonly isGatedRequest?: ((sessionId: string) => boolean) | undefined;
+    /** Identify an active reviewer child even outside its async review scope. */
+    readonly isReviewerRequest?: (sessionId: string) => boolean;
 }
 /** The structural options surface of `llm/stream` (T00 §6). */
 export interface OutboundOptionsLike {

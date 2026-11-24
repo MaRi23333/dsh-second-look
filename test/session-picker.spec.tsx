@@ -27,10 +27,11 @@ let el: HTMLDivElement
 let value: string
 let store: ReturnType<typeof snapshotStore<CatalogState>>
 let select: ReturnType<typeof vi.fn<SessionPickerProps['select']>>
+let notify: ReturnType<typeof vi.fn<SessionPickerProps['notify']>>
 let retry: ReturnType<typeof vi.fn>
 const translator = (dict: typeof accessEn) => (key: string, params?: Record<string, unknown>) => (dict[key as keyof typeof dict] ?? key).replace('{name}', String(params?.name ?? ''))
 function props(extra: Partial<SessionPickerProps> = {}): SessionPickerProps {
-  return { sessionKey: 'session-a', locked: false, catalogStore: store, retryCatalog: retry, select, useProjection: () => ({ currentValue: value }), t: translator(accessEn), ...extra } as SessionPickerProps
+  return { sessionKey: 'session-a', locked: false, catalogStore: store, retryCatalog: retry, select, notify, useProjection: () => ({ currentValue: value }), t: translator(accessEn), ...extra } as SessionPickerProps
 }
 async function render(extra: Partial<SessionPickerProps> = {}) { await act(async () => root.render(<SessionPicker {...props(extra)} />)) }
 async function click(selector: string) { const target = el.querySelector<HTMLButtonElement>(selector); expect(target).not.toBeNull(); await act(async () => target!.click()) }
@@ -39,7 +40,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   el = document.createElement('div'); document.body.appendChild(el); root = createRoot(el)
   value = 'read-only'; store = snapshotStore({ value: catalog, connected: true, error: false, revision: 1 } as CatalogState)
-  select = vi.fn(async () => true); retry = vi.fn()
+  select = vi.fn(async () => true); notify = vi.fn(); retry = vi.fn()
 })
 afterEach(async () => { await act(async () => root.unmount()); el.remove(); vi.restoreAllMocks() })
 
@@ -57,6 +58,24 @@ it('submits either tier once, leaves projection confirmation to the host, and re
   await choose('second-look-strict'); expect(select).toHaveBeenLastCalledWith('second-look-strict'); expect(el.textContent).not.toContain('Switch failed')
   expect(el.querySelector('.sl-permission-label')?.textContent).toBe('Read Only')
   value = 'second-look-strict'; await render(); expect(el.querySelector('.sl-permission-label')?.textContent).toBe('Enhanced review')
+})
+it('notifies once per confirmed Enhanced-to-Routine switch in the same visible conversation', async () => {
+  value = 'second-look-strict'; await render()
+  await choose('second-look-daily')
+  expect(select).toHaveBeenCalledOnce()
+  expect(notify).not.toHaveBeenCalled()
+  value = 'second-look-daily'; await render({ t: translator(accessZh) })
+  expect(notify).toHaveBeenCalledExactlyOnceWith(accessZh['review.downgraded'])
+  expect(el.querySelector('[role="dialog"]')).toBeNull()
+  expect(el.querySelector<HTMLButtonElement>('.sl-permission')?.disabled).toBe(false)
+  await render(); expect(notify).toHaveBeenCalledOnce()
+  value = 'second-look-strict'; await render()
+  value = 'second-look-daily'; await render()
+  expect(notify).toHaveBeenCalledTimes(2)
+  expect(notify).toHaveBeenLastCalledWith(accessEn['review.downgraded'])
+  value = 'second-look-strict'; await render()
+  value = 'second-look-daily'; await render({ sessionKey: 'session-b' })
+  expect(notify).toHaveBeenCalledTimes(2)
 })
 it.each(['danger-full-access', 'auto'])('keeps native risk acknowledgement before %s', async id => {
   await render(); await choose(id); expect(select).not.toHaveBeenCalled()
@@ -88,6 +107,8 @@ it('registers the official shadow slot, commands only its bound session, and rel
   const disposals: (() => void)[] = []
   const commandA = vi.fn(async () => ({ ok: true, value: { matched: true } }))
   const commandB = vi.fn(async () => ({ ok: true, value: { matched: true } }))
+  const notifyA = vi.fn()
+  const notifyB = vi.fn()
   const unregister = vi.fn()
   const stopEvent = vi.fn()
   const generation = snapshotStore<{ id: number } | undefined>({ id: 1 })
@@ -99,7 +120,13 @@ it('registers the official shadow slot, commands only its bound session, and rel
     get: () => ({ generation }),
     on: () => () => undefined,
     remote: { $on: () => stopEvent, permissionPresets: { catalog: async () => ({ ok: true, value: catalog }) } },
-    sessions: { binding: (id: string) => id === 'session-a' ? { session: { command: commandA } } : id === 'session-b' ? { session: { command: commandB } } : undefined },
+    sessions: {
+      binding: (id: string) => id === 'session-a' ? { session: { command: commandA } } : id === 'session-b' ? { session: { command: commandB } } : undefined,
+      scope: (id: string) => {
+        const notify = id === 'session-a' ? notifyA : id === 'session-b' ? notifyB : undefined
+        if (notify !== undefined) return { get: () => ({ input: { for: () => ({ notify }) } }) }
+      },
+    },
     slots: {
       inject: (_name: string, fn: () => () => void) => { disposals.push(fn()) },
       register: (options: { name: string; priority?: number; inject: typeof injected }) => {
@@ -115,7 +142,11 @@ it('registers the official shadow slot, commands only its bound session, and rel
   expect(await injected('session-b').select('second-look-strict')).toBe(true)
   expect(commandB).toHaveBeenCalledWith('/permission second-look-strict')
   expect(await injected('missing').select('second-look-daily')).toBe(false)
+  injected('session-a').notify('composer notice')
+  expect(notifyA).toHaveBeenCalledExactlyOnceWith('info', 'composer notice')
+  expect(notifyB).not.toHaveBeenCalled()
+  expect(commandA).toHaveBeenCalledOnce()
   for (const stop of disposals.reverse()) stop()
   expect(stopEvent).toHaveBeenCalledOnce(); expect(unregister).toHaveBeenCalled()
 })
-type SessionPickerInjectedForTest = Pick<SessionPickerProps, 'select'>
+type SessionPickerInjectedForTest = Pick<SessionPickerProps, 'select' | 'notify'>

@@ -18,4 +18,6 @@ export type SessionEventsSource = Session | {
  * @returns a frozen full log snapshot on alpha.5+, the `.events` array earlier.
  */
 export declare function sessionEvents(session: SessionEventsSource | null | undefined): readonly SessionEvent[];
+/** Last direct input affecting the active turn, including steering still in the inbox. */
+export declare function latestUserInputSeq(events: readonly SessionEvent[]): number | undefined;
 //# sourceMappingURL=session-events.d.ts.map

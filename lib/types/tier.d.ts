@@ -63,9 +63,9 @@ export interface TierConfig {
     readonly strict: TierSettings;
 }
 /** Prompt version stamp of the shipped daily prompt line. */
-export declare const DAILY_PROMPT_VERSION = "daily-v2";
+export declare const DAILY_PROMPT_VERSION = "daily-v4";
 /** Prompt version stamp of the shipped strict prompt line. */
-export declare const STRICT_PROMPT_VERSION = "strict-v2";
+export declare const STRICT_PROMPT_VERSION = "strict-v4";
 /** Shipped daily budgets (planning defaults, tunable after replay). */
 export declare const DEFAULT_DAILY_BUDGET: TierBudgetConfig;
 /** Shipped strict budgets (planning defaults, tunable after replay). */

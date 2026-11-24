@@ -51,6 +51,14 @@ function scopeKey(scope: DisclosureScope): string {
 /** The disclosure ledger for one mounted gate. */
 export class DisclosureLedger {
   private readonly records = new Map<string, DisclosureRecord>()
+  private readonly sessionRevisions = new Map<string, object>()
+
+  /** Check whether a pending review or tool result still belongs to its original authorization scope. */
+  captureSession(sessionId: string): () => boolean {
+    const revision = this.sessionRevisions.get(sessionId) ?? {}
+    this.sessionRevisions.set(sessionId, revision)
+    return () => this.sessionRevisions.get(sessionId) === revision
+  }
 
   /**
    * Record a disclosure decision for one exact scope.
@@ -78,12 +86,14 @@ export class DisclosureLedger {
   }
 
   invalidateSession(sessionId: string): void {
+    this.sessionRevisions.delete(sessionId)
     for (const [key, record] of this.records) if (record.scope.sessionId === sessionId) this.records.delete(key)
   }
 
   /** Invalidate everything (config/route change, disposal). */
   invalidateAll(): void {
     this.records.clear()
+    this.sessionRevisions.clear()
   }
 
   /** Record count (status surface). */

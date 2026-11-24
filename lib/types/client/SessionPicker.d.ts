@@ -5,11 +5,12 @@ export interface SessionPickerInjected {
     catalogStore: SnapshotSource<CatalogState>;
     retryCatalog: () => void;
     select: (preset: string) => Promise<boolean>;
+    notify: (message: string) => void;
 }
 export type SessionPickerProps = PropsRuntime<'conversation.input.permission'> & SessionPickerInjected & PropsLocale<'second-look.permission'>;
 /** Original glyphs use the host permission family's 16px currentColor outline. */
 export declare function ReviewIcon({ enhanced }: {
     enhanced?: boolean;
 }): React.ReactElement;
-export declare function SessionPicker({ locked, sessionKey, catalogStore, retryCatalog, select, useProjection, t, }: SessionPickerProps): React.ReactElement | null;
+export declare function SessionPicker({ locked, sessionKey, catalogStore, retryCatalog, select, notify, useProjection, t, }: SessionPickerProps): React.ReactElement | null;
 //# sourceMappingURL=SessionPicker.d.ts.map

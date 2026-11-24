@@ -28,6 +28,8 @@ export interface SettlementEntry {
     /** Invalidated entries can never pass the guard. */
     invalidated: boolean;
     invalidationReason?: string;
+    /** Recheck input immediately before consuming an automated approval. */
+    isInputCurrent?: (() => boolean) | undefined;
 }
 /** Guard verification result. */
 export type GuardVerdict = {
@@ -69,9 +71,10 @@ export declare class SettlementMap {
      * @param toolName - the tool the approval chain settled (checked against the record).
      * @param outcome - the real host outcome.
      * @param decidedBy - who decided.
+     * @param isInputCurrent - the recheck for an automated approval, when applicable.
      * @returns true when the settle was applied.
      */
-    settle(callId: string, toolName: string, outcome: SettlementOutcome, decidedBy: DecidedBy): boolean;
+    settle(callId: string, toolName: string, outcome: SettlementOutcome, decidedBy: DecidedBy, isInputCurrent?: () => boolean): boolean;
     /**
      * Guard-side verification: exactly one pass for one bound, settled
      * execution. Every mismatch is named in the reason (evidence for the deny).

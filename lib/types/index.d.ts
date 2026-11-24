@@ -44,7 +44,7 @@ export * from './evidence/sensitive.js';
 export * from './evidence/shell-signals.js';
 export * from './evidence/path-inspect.js';
 export * from './evidence/probe.js';
-export * from './evidence/context.js';
+export { buildUserContext, isTrustedInstruction, type BuildUserContextOptions, type ContextMessage } from './evidence/context.js';
 export * from './evidence/requests.js';
 export * from './evidence/node-fs.js';
 export * from './tier.js';

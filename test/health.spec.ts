@@ -91,17 +91,23 @@ describe('takeover failure regressions', () => {
     expect(JSON.stringify(sent)).not.toContain(secret)
     expect(audited.some(reason => reason.includes('attempt 3'))).toBe(true)
   })
-  it('review requests never recursively review or recover residual secrets', async () => {
+  it.each(['inline', 'child'])('blocks residual secrets in a %s reviewer request even with a work disclosure grant', async mode => {
     let nested = 0
     const owners: string[] = []
-    const guard = createOutboundGuard({ ledger: new DisclosureLedger(), isGatedRequest: () => false,
+    const ledger = new DisclosureLedger()
+    const sessionId = mode === 'inline' ? 'protected-parent' : 'review-cache-id'
+    ledger.record({ scope: { sessionId, destination: { provider: payload.provider, model: payload.model }, dataFingerprint: scanOutbound(payload).dataFingerprint },
+      granted: true, decidedBy: 'user', at: 0, evidence: [], requestRef: sessionId })
+    const guard = createOutboundGuard({ ledger, isGatedRequest: () => false,
+      isReviewerRequest: id => mode === 'child' && id === 'review-cache-id',
       requestPrivacyReview: async () => { nested++; return 'granted' }, restart: cleanReply,
       onEvent: event => { owners.push(event.requestRef) },
     })
-    const result = await runInReviewScope(() => chunks(guard({ ...payload, sessionId: 'review-cache-id' }, cleanReply)), 'protected-parent')
+    const run = () => chunks(guard({ ...payload, sessionId: 'review-cache-id' }, cleanReply))
+    const result = await (mode === 'inline' ? runInReviewScope(run, 'protected-parent') : run())
     expect(nested).toBe(0)
     expect(result).toMatchObject([{ reason: { kind: 'error' } }])
-    expect(owners).toEqual(['protected-parent'])
+    expect(owners).toEqual([sessionId])
   })
   it('does not swallow errors raised by a downstream adapter', async () => {
     const guard = createOutboundGuard({ ledger: new DisclosureLedger(), requestPrivacyReview: async () => 'granted' })
