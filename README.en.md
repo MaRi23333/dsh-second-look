@@ -24,17 +24,17 @@ If you want an AI to review shell commands while you approve file writes yoursel
 
 **Stepping away from your desk?** Pair Second Look with [ServerChan Watchdog](https://github.com/MaRi23333/dsh-serverchan-watchdog). Once configured, it sends a phone notification when a tool approval has been waiting in DSH longer than your chosen delay (five minutes by default). Return to DSH to approve or decline.
 
-> **Beta 0.1.4** · Requires DSH `>=0.2.1-rc.5 <0.3.0-0` and a reviewer model you trust.
+> **Beta 0.1.5** · Requires DSH `>=0.2.1-rc.5 <0.3.0-0` and a reviewer model you trust.
 
 ## Download and install
 
 Requires DSH `>=0.2.1-rc.5 <0.3.0-0`. You can install it in the desktop app without opening a terminal.
 
-1. In the sidebar, open **Plugins → Add plugin** and enter `dsh-second-look@latest`. To install this version specifically, enter `dsh-second-look@0.1.4`.
+1. In the sidebar, open **Plugins → Add plugin** and enter `dsh-second-look@latest`. To install this version specifically, enter `dsh-second-look@0.1.5`.
 2. Select **Enable now** after installation. If a restart is requested, choose **Quit** from the application menu and reopen DSH.
 3. Look for **Settings → Second Look** to confirm it is enabled.
 
-**Prefer a download?** [Download dsh-second-look-0.1.4.tgz](https://github.com/MaRi23333/dsh-second-look/releases/download/v0.1.4/dsh-second-look-0.1.4.tgz). Leave it packed and enter its full path in the same **Add plugin** box, then enable it as above. [View on npm](https://www.npmjs.com/package/dsh-second-look)
+**Prefer a download?** [Download dsh-second-look-0.1.5.tgz](https://github.com/MaRi23333/dsh-second-look/releases/download/v0.1.5/dsh-second-look-0.1.5.tgz). Leave it packed and enter its full path in the same **Add plugin** box, then enable it as above. [View on npm](https://www.npmjs.com/package/dsh-second-look)
 
 <details>
 <summary>Install with the desktop CLI</summary>
@@ -42,11 +42,11 @@ Requires DSH `>=0.2.1-rc.5 <0.3.0-0`. You can install it in the desktop app with
 Start DSH Desktop once, select **Manage dsh Command… → Install** from the application menu, then quit the app. In a new terminal, run:
 
 ```sh
-dsh plugin --profile desktop add dsh-second-look@0.1.4
+dsh plugin --profile desktop add dsh-second-look@0.1.5
 dsh plugin --profile desktop list
 ```
 
-Once you see `dsh-second-look@0.1.4`, reopen Desktop and enable the plugin. Use the `dsh` command bundled with Desktop; a standalone CLI installed with npm or run with `npx` cannot manage desktop plugins.
+Once you see `dsh-second-look@0.1.5`, reopen Desktop and enable the plugin. Use the `dsh` command bundled with Desktop; a standalone CLI installed with npm or run with `npx` cannot manage desktop plugins.
 
 </details>
 

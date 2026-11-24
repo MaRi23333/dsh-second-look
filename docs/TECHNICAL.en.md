@@ -2,7 +2,7 @@
 
 [Back to the overview](../README.en.md) · [简体中文](TECHNICAL.zh-CN.md)
 
-DSH `>=0.2.1-rc.5 <0.3.0-0` · Node.js `^22.19.0 || >=24.0.0` · `dsh-second-look@0.1.4`
+DSH `>=0.2.1-rc.5 <0.3.0-0` · Node.js `^22.19.0 || >=24.0.0` · `dsh-second-look@0.1.5`
 
 ## How It Works
 

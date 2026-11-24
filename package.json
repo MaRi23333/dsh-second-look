@@ -1,6 +1,6 @@
 {
   "name": "dsh-second-look",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publishConfig": { "access": "public" },
   "description": "Second Look (过目): per-session routine and enhanced review for DeepSeek Harness.",
   "type": "module",

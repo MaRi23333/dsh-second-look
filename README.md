@@ -24,17 +24,17 @@
 
 **离开电脑时也能收到提醒。** 可以搭配 [Server酱推送小助手](https://github.com/MaRi23333/dsh-serverchan-watchdog)。安装并配置好后，如果 DSH 等你批准一项操作超过设定时间（默认 5 分钟），小助手会推送到手机。回到 DSH 就能处理这次审批。
 
-> **测试版 0.1.4** · 需要 DSH `>=0.2.1-rc.5 <0.3.0-0` 和一个你信任的审核模型。
+> **测试版 0.1.5** · 需要 DSH `>=0.2.1-rc.5 <0.3.0-0` 和一个你信任的审核模型。
 
 ## 下载安装
 
 需要 DSH `>=0.2.1-rc.5 <0.3.0-0`。桌面版直接在插件页安装，无需打开终端。
 
-1. 在左侧栏打开 **插件 → 添加插件**，输入 `dsh-second-look@latest`。要安装本版，输入 `dsh-second-look@0.1.4`。
+1. 在左侧栏打开 **插件 → 添加插件**，输入 `dsh-second-look@latest`。要安装本版，输入 `dsh-second-look@0.1.5`。
 2. 安装完成后点 **立即启用**。如果提示重启，从应用菜单选 **退出（Quit）**，再重新打开 DSH。
 3. 在 **设置 → 过目** 看到插件入口，即已启用。
 
-**手动下载安装包：** [下载 dsh-second-look-0.1.4.tgz](https://github.com/MaRi23333/dsh-second-look/releases/download/v0.1.4/dsh-second-look-0.1.4.tgz)，不用解压。在同一个「添加插件」框里输入下载文件的完整路径，再按上面的步骤启用。[查看 npm 包](https://www.npmjs.com/package/dsh-second-look)
+**手动下载安装包：** [下载 dsh-second-look-0.1.5.tgz](https://github.com/MaRi23333/dsh-second-look/releases/download/v0.1.5/dsh-second-look-0.1.5.tgz)，不用解压。在同一个「添加插件」框里输入下载文件的完整路径，再按上面的步骤启用。[查看 npm 包](https://www.npmjs.com/package/dsh-second-look)
 
 <details>
 <summary>用桌面版命令行安装</summary>
@@ -42,11 +42,11 @@
 先启动一次 DSH Desktop，在应用菜单选 **Manage dsh Command… → Install**，然后退出桌面版。打开新终端，运行：
 
 ```sh
-dsh plugin --profile desktop add dsh-second-look@0.1.4
+dsh plugin --profile desktop add dsh-second-look@0.1.5
 dsh plugin --profile desktop list
 ```
 
-看到 `dsh-second-look@0.1.4` 后，重新打开桌面版并启用插件。请使用桌面版自带的 `dsh` 命令；通过 npm 或 `npx` 启动的独立 CLI 不能管理桌面插件。
+看到 `dsh-second-look@0.1.5` 后，重新打开桌面版并启用插件。请使用桌面版自带的 `dsh` 命令；通过 npm 或 `npx` 启动的独立 CLI 不能管理桌面插件。
 
 </details>
 
