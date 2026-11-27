@@ -79,12 +79,12 @@ export function apply(ctx: ClientContext): void {
   if (typeof ctx.locale.getLocale === 'function') effectCtx.effect(() => syncHostLanguage(
     () => ctx.locale.getLocale().active,
     changed => ctx.on('locale/change', changed),
-    (ctx.get('connection') as CatalogHost['connection']).generation,
+    (ctx.get('connection') as unknown as CatalogHost['connection']).generation,
     async (language, signal) => (await fetch('/second-look/locale', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ language }), signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
     })).ok,
   ), 'second-look: host language')
-  const catalog = new SessionCatalog({ connection: ctx.get('connection') as CatalogHost['connection'], remote: host.remote })
+  const catalog = new SessionCatalog({ connection: ctx.get('connection') as unknown as CatalogHost['connection'], remote: host.remote })
   effectCtx.effect(() => () => catalog.dispose(), 'second-look: session catalog')
   ctx.slots.inject('conversation.input.permission', () => ctx.slots.register({
     name: 'conversation.input.permission',

@@ -74,7 +74,7 @@ import { latestUserInputSeq, sessionEvents } from '../session-events.ts'
 import { AuditLog, FileAuditPersistence, type AuditPersistence } from '../settings/audit.ts'
 import { FileSettingsPersistence, defaultSettingsDir, type SettingsPersistence } from '../settings/persistence.ts'
 import { SettingsStore, runtimeSettingsFromConfig, type RuntimeSettings } from '../settings/store.ts'
-import { registerSettingsRoutes, type SettingsViewSources, type WebServerFace } from '../settings/http.ts'
+import { registerSettingsRoutes, type SettingsConnection, type SettingsViewSources, type WebServerFace } from '../settings/http.ts'
 
 /** The structural execution object crossing `tools/pre-execute` and `guard`. */
 export interface ExecLike {
@@ -1196,7 +1196,8 @@ export function mountGate(ctx: Context, baseConfig: ResolvedConfig, deps: GateDe
   }
   disposes.push(attachWhenAvailable('webServer', (service) => {
     const host = service as WebServerFace
-    return typeof host.register === 'function' ? registerSettingsRoutes(host, settingsStore, views) : undefined
+    if (typeof host.register !== 'function') return undefined
+    return registerSettingsRoutes(host, settingsStore, views, () => ctx.get('connection') as SettingsConnection | undefined)
   }))
 
   // ---- finalize tool (T05): delivery-time report; the host has no end hook,

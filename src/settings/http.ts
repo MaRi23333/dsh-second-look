@@ -1,17 +1,21 @@
 /**
  * Modified for dsh-second-look, 2026-10-31 (original work; T07; 部署后补).
  *
- * Loopback-only HTTP API for the IN-CLIENT settings panel (ported from the
- * local fork's `settings-http.ts` pattern; see THIRD-PARTY-SOURCES.md).
- * Every route is bound to loopback AND checked against a loopback Host/Origin
- * — the settings surface must never be reachable from the network. The
- * status/audit payloads carry names and counts only: no secrets, no full
- * config, no thinking text. There is NO standalone HTML page and NO chat
- * command for configuration (user decision 2026-10-31): config adjustment
- * lives in the client's built-in Settings panel, which calls these routes.
+ * Owner-authenticated loopback HTTP API for the in-client settings panel.
+ * Settings and audit responses are redacted views of the corresponding stores.
+ * Derived from the local fork's settings-http.ts (see THIRD-PARTY-SOURCES.md).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { SettingsError, type SettingsStore } from './store.ts'
+
+interface SettingsPeer {
+  readonly principal: { readonly kind: string }
+}
+
+/** Host Connection admission for routers that do not pass an admitted peer. */
+export interface SettingsConnection {
+  admit(request: IncomingMessage): { readonly peer: SettingsPeer } | { readonly rejection: 401 | 403 }
+}
 
 /**
  * The structural `webServer` service (feature-detected). The real host router
@@ -24,7 +28,8 @@ export interface WebServerFace {
   register(route: {
     kind: 'exact' | 'prefix'
     path: string
-    handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
+    auth: 'required'
+    handler: (req: IncomingMessage, res: ServerResponse, peer?: SettingsPeer) => void | Promise<void>
   }): () => void
   /** The listener's root URL (the real host exposes `getOrigin`); used for the LIVE settings URL. */
   getOrigin?(): string
@@ -59,17 +64,30 @@ export interface SettingsViewSources {
  * @param web - the host web server face.
  * @param store - the settings store (GET/POST config).
  * @param views - status/audit/tier sources.
+ * @param getConnection - resolve the current Host Connection for older routers.
  * @returns the disposer.
  */
-export function registerSettingsRoutes(web: WebServerFace, store: SettingsStore, views: SettingsViewSources): () => void {
+export function registerSettingsRoutes(
+  web: WebServerFace,
+  store: SettingsStore,
+  views: SettingsViewSources,
+  getConnection: () => SettingsConnection | undefined,
+): () => void {
   return web.register({
     kind: 'prefix',
     path: '/second-look',
-    handler: async (req, res) => {
+    auth: 'required',
+    handler: async (req, res, peer) => {
+      if (!guardLoopback(req, res)) return
+      const rejection = settingsRejection(req, peer, getConnection)
+      if (rejection !== undefined) {
+        const error = { 401: 'unauthorized', 403: 'forbidden', 503: 'host-authentication-unavailable' }[rejection]
+        sendJson(res, rejection, { ok: false, error })
+        return
+      }
       const url = new URL(req.url ?? '/', 'http://localhost')
       const sub = url.pathname.replace(/^\/second-look\/?/, '')
       if (req.method === 'GET') {
-        if (!guardLoopback(req, res)) return
         if (sub === 'status') {
           sendJson(res, 200, { ok: true, ...views.status() })
           return
@@ -154,6 +172,25 @@ export function registerSettingsRoutes(web: WebServerFace, store: SettingsStore,
   })
 }
 
+function settingsRejection(
+  req: IncomingMessage,
+  peer: SettingsPeer | undefined,
+  getConnection: () => SettingsConnection | undefined,
+): 401 | 403 | 503 | undefined {
+  try {
+    if (peer === undefined) {
+      const connection = getConnection()
+      if (typeof connection?.admit !== 'function') return 503
+      const admission = connection.admit(req)
+      if ('rejection' in admission) return admission.rejection
+      peer = admission.peer
+    }
+    return peer.principal.kind === 'owner' ? undefined : 403
+  } catch {
+    return 503
+  }
+}
+
 function isLoopback(address: string | undefined): boolean {
   if (address === undefined) return false
   const normalized = address.toLowerCase().replace(/^::ffff:/, '')
@@ -190,7 +227,6 @@ function guardLoopback(req: IncomingMessage, res: ServerResponse): boolean {
 }
 
 function guardWrite(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!guardLoopback(req, res)) return false
   const host = loopbackHost(req.headers.host)
   const contentType = (req.headers['content-type'] ?? '').split(';')[0]?.trim() ?? ''
   if (contentType !== 'application/json') {

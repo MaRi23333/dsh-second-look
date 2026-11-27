@@ -1,17 +1,25 @@
 /**
  * Modified for dsh-second-look, 2026-10-31 (original work; T07; 部署后补).
  *
- * Loopback-only HTTP API for the IN-CLIENT settings panel (ported from the
- * local fork's `settings-http.ts` pattern; see THIRD-PARTY-SOURCES.md).
- * Every route is bound to loopback AND checked against a loopback Host/Origin
- * — the settings surface must never be reachable from the network. The
- * status/audit payloads carry names and counts only: no secrets, no full
- * config, no thinking text. There is NO standalone HTML page and NO chat
- * command for configuration (user decision 2026-10-31): config adjustment
- * lives in the client's built-in Settings panel, which calls these routes.
+ * Owner-authenticated loopback HTTP API for the in-client settings panel.
+ * Settings and audit responses are redacted views of the corresponding stores.
+ * Derived from the local fork's settings-http.ts (see THIRD-PARTY-SOURCES.md).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { type SettingsStore } from './store.js';
+interface SettingsPeer {
+    readonly principal: {
+        readonly kind: string;
+    };
+}
+/** Host Connection admission for routers that do not pass an admitted peer. */
+export interface SettingsConnection {
+    admit(request: IncomingMessage): {
+        readonly peer: SettingsPeer;
+    } | {
+        readonly rejection: 401 | 403;
+    };
+}
 /**
  * The structural `webServer` service (feature-detected). The real host router
  * (rc.5 `WebServer.register/match`) matches `kind: 'exact'` routes by FULL
@@ -23,7 +31,8 @@ export interface WebServerFace {
     register(route: {
         kind: 'exact' | 'prefix';
         path: string;
-        handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+        auth: 'required';
+        handler: (req: IncomingMessage, res: ServerResponse, peer?: SettingsPeer) => void | Promise<void>;
     }): () => void;
     /** The listener's root URL (the real host exposes `getOrigin`); used for the LIVE settings URL. */
     getOrigin?(): string;
@@ -56,7 +65,9 @@ export interface SettingsViewSources {
  * @param web - the host web server face.
  * @param store - the settings store (GET/POST config).
  * @param views - status/audit/tier sources.
+ * @param getConnection - resolve the current Host Connection for older routers.
  * @returns the disposer.
  */
-export declare function registerSettingsRoutes(web: WebServerFace, store: SettingsStore, views: SettingsViewSources): () => void;
+export declare function registerSettingsRoutes(web: WebServerFace, store: SettingsStore, views: SettingsViewSources, getConnection: () => SettingsConnection | undefined): () => void;
+export {};
 //# sourceMappingURL=http.d.ts.map

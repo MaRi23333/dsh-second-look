@@ -7,7 +7,7 @@
  * are distinguishable, and NO sensitive value ever appears in snapshots,
  * error text or logs.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -21,6 +21,7 @@ import {
   SettingsError,
   SettingsStore,
   resolveConfig,
+  type SettingsConnection,
   type SettingsPersistence,
   type SettingsViewSources,
   type WebServerFace,
@@ -111,7 +112,13 @@ describe('audit log (T07)', () => {
 })
 
 describe('loopback settings routes (T07)', () => {
-  function fakeExchange(method: string, url: string, body?: unknown, overrides: { remoteAddress?: string; origin?: string } = {}) {
+  type Route = Parameters<WebServerFace['register']>[0]
+  type Peer = Parameters<Route['handler']>[2]
+  type RequestOptions = { remoteAddress?: string; origin?: string; peer?: Peer; onBody?: () => void }
+  const owner = { principal: { kind: 'owner' } }
+  const ownerConnection = () => ({ admit: () => ({ peer: owner }) })
+
+  function fakeExchange(method: string, url: string, body?: unknown, overrides: RequestOptions = {}) {
     const written: { status?: number; body?: string; headers?: Record<string, string> } = {}
     const req = {
       method,
@@ -123,6 +130,7 @@ describe('loopback settings routes (T07)', () => {
       },
       socket: { remoteAddress: overrides.remoteAddress ?? '127.0.0.1' },
       async *[Symbol.asyncIterator]() {
+        overrides.onBody?.()
         yield Buffer.from(JSON.stringify(body ?? {}))
       },
     } as unknown as IncomingMessage
@@ -139,12 +147,12 @@ describe('loopback settings routes (T07)', () => {
   }
 
   function fakeWeb() {
-    let handler: ((req: IncomingMessage, res: ServerResponse) => void | Promise<void>) | undefined
-    let registered: { kind: string; path: string } | undefined
+    let handler: Route['handler'] | undefined
+    let registered: Pick<Route, 'kind' | 'path' | 'auth'> | undefined
     const web: WebServerFace = {
       register(route) {
         handler = route.handler
-        registered = { kind: route.kind, path: route.path }
+        registered = { kind: route.kind, path: route.path, auth: route.auth }
         return () => {
           handler = undefined
         }
@@ -153,9 +161,9 @@ describe('loopback settings routes (T07)', () => {
     return {
       web,
       registered: () => registered,
-      invoke: async (method: string, url: string, body?: unknown, overrides: { remoteAddress?: string; origin?: string } = {}) => {
+      invoke: async (method: string, url: string, body?: unknown, overrides: RequestOptions = {}) => {
         const exchange = fakeExchange(method, url, body, overrides)
-        await handler?.(exchange.req, exchange.res)
+        await handler?.(exchange.req, exchange.res, overrides.peer)
         return exchange.written
       },
     }
@@ -174,11 +182,11 @@ describe('loopback settings routes (T07)', () => {
   it('serves the JSON API on loopback only — NO HTML page (部署后补: panel-only config)', async () => {
     const { web, registered, invoke } = fakeWeb()
     const store = seedStore()
-    registerSettingsRoutes(web, store, views(store))
+    registerSettingsRoutes(web, store, views(store), ownerConnection)
     // 安装前复核 R1: ONE prefix route claiming /second-look and everything
     // beneath it — an exact route can never match the sub-interfaces on the
     // real host router (see host-router.spec.ts for the real-matcher proof).
-    expect(registered()).toEqual({ kind: 'prefix', path: '/second-look' })
+    expect(registered()).toEqual({ kind: 'prefix', path: '/second-look', auth: 'required' })
     // 部署后补: NO standalone HTML page — the bare paths answer JSON 404;
     // configuration happens only in the client's built-in Settings panel.
     const page = await invoke('GET', '/second-look')
@@ -196,12 +204,43 @@ describe('loopback settings routes (T07)', () => {
     expect(remoteWrite.status).toBe(403)
   })
 
+  it('refuses requests before reading views or bodies when Host admission fails', async () => {
+    const { web, invoke } = fakeWeb()
+    const store = seedStore()
+    const config = vi.fn(views(store).config)
+    const onBody = vi.fn()
+    let connection: SettingsConnection | undefined
+    registerSettingsRoutes(web, store, { ...views(store), config }, () => connection)
+
+    expect((await invoke('GET', '/second-look/config')).status).toBe(503)
+    connection = { admit: () => { throw new Error('admission unavailable') } }
+    expect((await invoke('GET', '/second-look/config')).status).toBe(503)
+    connection = { admit: () => ({ rejection: 401 }) }
+    expect((await invoke('GET', '/second-look/config')).status).toBe(401)
+    expect((await invoke('POST', '/second-look/config', { reviewerModel: 'unused' }, { onBody })).status).toBe(401)
+    expect(config).not.toHaveBeenCalled()
+    expect(onBody).not.toHaveBeenCalled()
+    expect(store.get().reviewerModel).toBe('rv')
+  })
+
+  it('checks ownership of the peer already admitted by the router', async () => {
+    const { web, invoke } = fakeWeb()
+    const store = seedStore()
+    const connection = vi.fn(ownerConnection)
+    registerSettingsRoutes(web, store, views(store), connection)
+
+    expect((await invoke('GET', '/second-look/status', undefined, { peer: owner })).status).toBe(200)
+    const restricted = { principal: { kind: 'restricted' } }
+    expect((await invoke('GET', '/second-look/status', undefined, { peer: restricted })).status).toBe(403)
+    expect(connection).not.toHaveBeenCalled()
+  })
+
   it('requires explicit same-origin clear and never mutates settings', async () => {
     const { web, invoke } = fakeWeb()
     const store = seedStore()
     let count = 1
     const before = store.get()
-    registerSettingsRoutes(web, store, { ...views(store), audit: () => count ? [{ decision: 'allow' }] : [], clearAudit: () => { count = 0 } })
+    registerSettingsRoutes(web, store, { ...views(store), audit: () => count ? [{ decision: 'allow' }] : [], clearAudit: () => { count = 0 } }, ownerConnection)
     expect((await invoke('GET', '/second-look/audit/clear')).status).toBe(404)
     expect((await invoke('POST', '/second-look/audit/clear', {})).status).toBe(400)
     expect((await invoke('POST', '/second-look/audit/clear', { confirm: true }, { origin: 'http://evil.example' })).status).toBe(403)
@@ -214,7 +253,7 @@ describe('loopback settings routes (T07)', () => {
   it('validates config/tier writes and rejects forged origins', async () => {
     const { web, invoke } = fakeWeb()
     const store = seedStore()
-    registerSettingsRoutes(web, store, views(store))
+    registerSettingsRoutes(web, store, views(store), ownerConnection)
     const saved = await invoke('POST', '/second-look/config', { reviewerModel: 'rv3' })
     expect(saved.body).toContain('rv3')
     const bad = await invoke('POST', '/second-look/config', { apiKey: 'sk-x' })
@@ -250,7 +289,7 @@ describe('loopback settings routes (T07)', () => {
       }
     }
     const store = new SettingsStore(runtimeSettingsFromConfig(resolveConfig({ reviewerModel: 'rv', reviewerModelProvider: 'rp' })), new FailingPersistence())
-    registerSettingsRoutes(web, store, views(store))
+    registerSettingsRoutes(web, store, views(store), ownerConnection)
     const failed = await invoke('POST', '/second-look/config', { reviewerModel: 'never-saved' })
     expect(failed.status).toBe(500)
     expect(String(failed.body)).toContain('save-failed')

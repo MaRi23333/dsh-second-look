@@ -19,6 +19,7 @@ import PermissionPresets from '@deepseek-ai/dsh-permission-presets'
 import FsLocal from '@deepseek-ai/dsh-fs-local'
 import WorkingDirectory from '@deepseek-ai/dsh-working-directory'
 import { WebServer } from '@deepseek-ai/dsh-host-webserver'
+import * as HostConnection from '@deepseek-ai/dsh-client-connection'
 import { FileSettingsPersistence, type SettingsPersistence } from '../src/settings/persistence.ts'
 import { FileAuditPersistence, type AuditPersistence } from '../src/settings/audit.ts'
 import { mountPermissionPresets } from '../src/gate/register-presets.ts'
@@ -36,6 +37,41 @@ async function availablePort(): Promise<number> {
   await new Promise<void>((resolve, reject) => socket.close(error => error ? reject(error) : resolve()))
   return port
 }
+
+async function openSettingsClient(ctx: Context) {
+  await ctx.plugin(WebServer, { host: '127.0.0.1', port: await availablePort() })
+  ctx.provide('credentials', {
+    // Use the real signing and admission service with an ephemeral credential store.
+    async modifyRecord(_key: unknown, create: (current: undefined) => Promise<unknown>) {
+      return await create(undefined)
+    },
+  } as never)
+  await ctx.plugin(HostConnection, {})
+  const connection = ctx.get('connection') as HostConnection.HostConnectionHandle
+  ctx.webServer.register({
+    kind: 'exact',
+    path: '/',
+    handler(req, res) {
+      if (connection.authorizeIndex(req, res)) {
+        res.writeHead(204)
+        res.end()
+      }
+    },
+  })
+  const origin = ctx.webServer.getOrigin()
+  const login = await fetch(connection.authenticatedUrl(origin), { redirect: 'manual' })
+  expect(login.status).toBe(303)
+  const cookie = login.headers.getSetCookie()[0]?.split(';', 1)[0]
+  if (!cookie) throw new Error('Host did not issue a settings client cookie')
+  return {
+    origin,
+    get: (path: string) => fetch(`${origin}/second-look/${path}`, { headers: { cookie } }),
+    post: (path: string, value: unknown) => fetch(`${origin}/second-look/${path}`, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' }, body: JSON.stringify(value),
+    }),
+  }
+}
+
 const contexts: Context[] = []
 afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
 function textChunks(text: string): StreamChunk[] {
@@ -164,9 +200,8 @@ describe('real rc.5 host pipeline', () => {
   })
   it('follows host locale over HTTP for real human approval, prompt output language, and denial feedback', async () => {
     const h = await host('ask_user')
-    await h.ctx.plugin(WebServer, { host: '127.0.0.1', port: await availablePort() })
-    const origin = h.ctx.webServer.getOrigin()
-    const locale = (language: string) => fetch(`${origin}/second-look/locale`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ language }) })
+    const settings = await openSettingsClient(h.ctx)
+    const locale = (language: string) => settings.post('locale', { language })
     const asks: string[] = []
     h.ctx.on('approval/request', async (request) => { asks.push(request.reason ?? ''); return 'rejected' })
     let decision = 'ask_user'
@@ -203,14 +238,13 @@ describe('real rc.5 host pipeline', () => {
       expect(first.gate.audit.blockedRecent().some(r => r.decision === 'outbound-blocked')).toBe(true)
       await first.ctx.fiber.dispose(); contexts.splice(contexts.indexOf(first.ctx), 1)
       const second = await host('allow', process.cwd(), new MemorySettingsPersistence(), false, new FileAuditPersistence(dir))
-      await second.ctx.plugin(WebServer, { host: '127.0.0.1', port: await availablePort() })
-      const origin = second.ctx.webServer.getOrigin()
-      const get = async () => await (await fetch(`${origin}/second-look/audit?limit=500`)).json() as { records: unknown[]; blockedRecords: { decision: string; reason: string }[] }
+      const settings = await openSettingsClient(second.ctx)
+      const get = async () => await (await settings.get('audit?limit=500')).json() as { records: unknown[]; blockedRecords: { decision: string; reason: string }[] }
       let result = await get()
       expect(result.records).toHaveLength(0)
       expect(result.blockedRecords.some(r => r.decision === 'deny')).toBe(true)
       expect(JSON.stringify(result)).not.toContain('FAKE_HOST_SECRET_12345678')
-      const clear = async (scope: string) => await fetch(`${origin}/second-look/audit/clear`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ confirm: true, scope }) })
+      const clear = (scope: string) => settings.post('audit/clear', { confirm: true, scope })
       expect((await clear('recent')).status).toBe(200)
       expect((await get()).blockedRecords.length).toBeGreaterThan(0)
       expect((await clear('invalid')).status).toBe(400)
@@ -564,28 +598,36 @@ describe('real rc.5 host pipeline', () => {
     } finally { await rm(cwd, { recursive: true, force: true }) }
   })
 
-  it('serves real HTTP after late webserver injection and persists the reviewer across host recreation', async () => {
+  it('checks real Host admission and serves authenticated settings after late injection', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'second-look-settings-'))
     try {
       const first = await host('allow', process.cwd(), new FileSettingsPersistence(dir))
-      await first.ctx.plugin(WebServer, { host: '127.0.0.1', port: await availablePort() })
-      const origin = first.ctx.webServer.getOrigin()
-      expect((await fetch(`${origin}/second-look/status`)).status).toBe(200)
+      const settings = await openSettingsClient(first.ctx)
+      expect((await fetch(`${settings.origin}/second-look/config`)).status).toBe(401)
+      const anonymous = await fetch(`${settings.origin}/second-look/config`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reviewerModel: 'anonymous-write' }),
+      })
+      expect(anonymous.status).toBe(401)
+      const config = await (await settings.get('config')).json() as { reviewerModel: string }
+      expect(config.reviewerModel).toBe('reviewer')
+      expect((await settings.get('status')).status).toBe(200)
       await first.turn('harmless audit check', [callChunks('audit-marker'), textChunks('done')])
-      const audit = await (await fetch(`${origin}/second-look/audit?limit=500`)).json() as { records: { sessionId: string; callId: string }[] }
+      const audit = await (await settings.get('audit?limit=500')).json() as { records: { sessionId: string; callId: string }[] }
       expect(audit.records.some(r => r.sessionId === String(first.agent.id) && r.callId === 'audit-marker')).toBe(true)
-      const clear = await fetch(`${origin}/second-look/audit/clear`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirm: true }) })
+      const clear = await settings.post('audit/clear', { confirm: true })
       expect(clear.status).toBe(200)
-      expect((await (await fetch(`${origin}/second-look/audit`)).json() as { records: unknown[] }).records).toEqual([])
-      const saved = await fetch(`${origin}/second-look/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reviewerModel: 'persisted-reviewer', totalTimeoutMsDaily: 1234 }) })
+      expect((await (await settings.get('audit')).json() as { records: unknown[] }).records).toEqual([])
+      const saved = await settings.post('config', { reviewerModel: 'persisted-reviewer', totalTimeoutMsDaily: 1234 })
       expect(saved.status).toBe(200)
-      const ambiguous = await fetch(`${origin}/second-look/tier`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tier: 'strict' }) })
+      const ambiguous = await settings.post('tier', { tier: 'strict' })
       expect(ambiguous.status).toBe(400)
+      expect((await settings.post('tier', { sessionId: String(first.agent.id), tier: 'strict' })).status).toBe(200)
+      expect(first.gate.getTier(String(first.agent.id))).toBe('strict')
       await first.ctx.fiber.dispose()
       contexts.splice(contexts.indexOf(first.ctx), 1)
       const second = await host('allow', process.cwd(), new FileSettingsPersistence(dir))
-      await second.ctx.plugin(WebServer, { host: '127.0.0.1', port: await availablePort() })
-      const readback = await (await fetch(`${second.ctx.webServer.getOrigin()}/second-look/config`)).json() as { reviewerModel: string; daily: { totalTimeoutMs: number } }
+      const reopened = await openSettingsClient(second.ctx)
+      const readback = await (await reopened.get('config')).json() as { reviewerModel: string; daily: { totalTimeoutMs: number } }
       expect(readback.reviewerModel).toBe('persisted-reviewer')
       expect(readback.daily.totalTimeoutMs).toBe(1234)
       expect(second.gate.status().reviewer).toBe('review-test/persisted-reviewer')

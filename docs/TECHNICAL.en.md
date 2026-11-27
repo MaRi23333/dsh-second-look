@@ -2,7 +2,7 @@
 
 [Back to the overview](../README.en.md) · [简体中文](TECHNICAL.zh-CN.md)
 
-DSH `>=0.2.1-rc.5 <0.3.0-0` · Node.js `^22.19.0 || >=24.0.0` · `dsh-second-look@0.1.5`
+DSH `>=0.2.1-rc.5 <0.3.0-0` · Node.js `^22.19.0 || >=24.0.0` · `dsh-second-look@0.1.6`
 
 ## How It Works
 
@@ -71,7 +71,7 @@ Because the host has no end-of-turn hook capable of blocking final assistant tex
 3. **Incomplete I/O Coverage**: Only actions routed through governed DSH tool-dispatch seams in gated sessions are inspected. Direct unmanaged Node I/O, direct adapter network traffic, third-party plugin I/O, and peer sessions running under native non-gated presets are outside its scope.
 4. **Voluntary `second_look_finalize` & Per-File Batch Reuse**: `second_look_finalize` cannot block final text emission, and batch review reuse validates content hashes per individual file (within file-count and byte budgets) without re-evaluating newly formed cross-file interactions among previously reviewed files.
 5. **Secret detection and Enhanced outbound checks**. Scanning relies on finite pattern rules, including private-key blocks, known token prefixes, JWTs, Bearer headers, and `KEY=VALUE` assignments. Other secret formats, natural-language confidential text, or encoded payloads may be missed. DSH loads attachment bodies after the outbound check. Enhanced review blocks the original request when sensitive content matches and disclosure is unauthorized. It continues with a redacted copy that passes a second check or returns a block error for that request. Tool-level `ask_user` uses the host approval dialog. The independent reviewer makes outbound disclosure decisions. Reviewer requests that still contain matched sensitive content after redaction are blocked without a recursive review.
-6. **Unauthenticated Loopback Settings API**: The local settings and audit HTTP endpoints (`/second-look/*`) bind to loopback and check `Host` / `Origin` headers against browser cross-origin access, but they do not require an access token and do not defend against other local processes on the same machine.
+6. **Settings and audit endpoints** accept loopback requests from a DSH-authenticated owner. Hosts with route authentication pass the admitted identity to the handler. On older hosts, the handler checks admission through Connection before reading views or parsing request bodies.
 7. **Latency & Token Cost**: Calling an independent reviewer model and running automated evidence rounds add latency and token usage to governed turns.
 
 ---

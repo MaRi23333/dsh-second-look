@@ -46,6 +46,8 @@ function store(): SettingsStore {
   return new SettingsStore(runtimeSettingsFromConfig(resolveConfig({ reviewerModel: 'rv', reviewerModelProvider: 'rp' })))
 }
 
+const ownerConnection = () => ({ admit: () => ({ peer: { principal: { kind: 'owner' } } }) })
+
 function views(current: SettingsStore): SettingsViewSources {
   let tier = 'daily'
   return {
@@ -87,7 +89,7 @@ describe('settings routes against the REAL host router (安装前复核 R1)', ()
   it('matches every settings surface — bare page, trailing slash and all sub-interfaces', () => {
     const router = realRouter()
     const current = store()
-    registerSettingsRoutes(router as unknown as WebServerFace, current, views(current))
+    registerSettingsRoutes(router as unknown as WebServerFace, current, views(current), ownerConnection)
     for (const path of ALL_SURFACES) {
       expect(router.match(path), `route must match ${path}`).toBeDefined()
     }
@@ -96,7 +98,7 @@ describe('settings routes against the REAL host router (安装前复核 R1)', ()
   it('claims ONLY the /second-look subtree (prefix contract: path or path + "/")', () => {
     const router = realRouter()
     const current = store()
-    registerSettingsRoutes(router as unknown as WebServerFace, current, views(current))
+    registerSettingsRoutes(router as unknown as WebServerFace, current, views(current), ownerConnection)
     for (const path of ['/second-look-extra', '/second-lookx/status', '/other', '/', '/gate-check', '/gate-check/config']) {
       expect(router.match(path), `route must NOT match ${path}`).toBeUndefined()
     }
@@ -105,7 +107,7 @@ describe('settings routes against the REAL host router (安装前复核 R1)', ()
   it('serves the matched sub-interfaces end-to-end through the router', async () => {
     const router = realRouter()
     const current = store()
-    registerSettingsRoutes(router as unknown as WebServerFace, current, views(current))
+    registerSettingsRoutes(router as unknown as WebServerFace, current, views(current), ownerConnection)
     // 部署后补: the bare paths carry NO HTML page (panel-only configuration)
     const page = fakeExchange('GET', '/second-look/')
     await router.match('/second-look/')!.handler(page.req, page.res)
